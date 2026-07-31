@@ -347,3 +347,377 @@ create trigger trg_orders_updated_at
 -- do update" ở migration 2.
 -- =========================================================
 update storage.buckets set public = true where id = 'acc-gallery';
+
+
+
+-- =========================================================
+-- MIGRATION 5 — HỆ THỐNG ĐẶT LỊCH (BOOKING) THEO KHUNG GIỜ
+-- Bổ sung: bookings, booking_logs, booking_history
+-- Idempotent — an toàn chạy lại nhiều lần, không mất dữ liệu cũ,
+-- không đổi logic các bảng hiện có (accounts/orders/payments/rentals
+-- không bị chỉnh sửa cấu trúc hay dữ liệu).
+--
+-- Chống trùng lịch (Race Condition) được đảm bảo ở TẦNG DATABASE
+-- bằng EXCLUDE CONSTRAINT (GiST), không chỉ dựa vào kiểm tra ở
+-- JavaScript — nên kể cả 2 khách bấm đặt cùng lúc, Postgres sẽ tự
+-- chặn giao dịch trùng giờ, không cần transaction thủ công phía client.
+-- =========================================================
+
+create extension if not exists btree_gist;
+
+-- ---------------------------------------------------------
+-- 5.1 BẢNG bookings — lịch đặt theo khung giờ cho từng account
+-- ---------------------------------------------------------
+create table if not exists public.bookings (
+  id              uuid primary key default gen_random_uuid(),
+  code            text unique,
+  account_id      text not null references public.accounts(id) on delete restrict,
+  account_name    text not null,
+  customer_name   text not null default '',
+  phone           text not null default '',
+  telegram        text not null default '',
+  zalo            text not null default '',
+  start_time      timestamptz not null,
+  end_time        timestamptz not null,
+  duration_hours  numeric not null,
+  amount          numeric not null default 0,
+  status          text not null default 'pending'
+                  check (status in ('pending','confirmed','active','completed','cancelled')),
+  order_id        uuid references public.orders(id) on delete set null,
+  notes           text not null default '',
+  created_at      timestamptz not null default now(),
+  updated_at      timestamptz not null default now(),
+  constraint bookings_time_valid check (end_time > start_time)
+);
+
+-- Cột range dùng cho exclusion constraint (không lưu trùng dữ liệu,
+-- chỉ là generated column tính từ start_time/end_time)
+alter table public.bookings
+  add column if not exists time_range tstzrange
+  generated always as (tstzrange(start_time, end_time, '[)')) stored;
+
+-- CHẶN TRÙNG LỊCH Ở TẦNG DATABASE: cùng 1 account, thời gian giao nhau,
+-- và trạng thái còn "chiếm chỗ" (pending/confirmed/active) thì không
+-- được phép tồn tại 2 booking chồng nhau, kể cả khi 2 request đến
+-- đồng thời (race condition an toàn tuyệt đối, do Postgres tự khoá).
+drop index if exists bookings_no_overlap;
+alter table public.bookings drop constraint if exists bookings_no_overlap;
+alter table public.bookings add constraint bookings_no_overlap
+  exclude using gist (
+    account_id with =,
+    time_range with &&
+  ) where (status in ('pending','confirmed','active'));
+
+create index if not exists idx_bookings_account on public.bookings(account_id);
+create index if not exists idx_bookings_status  on public.bookings(status);
+create index if not exists idx_bookings_code    on public.bookings(code);
+create index if not exists idx_bookings_start   on public.bookings(start_time);
+create index if not exists idx_bookings_phone   on public.bookings(phone);
+
+drop trigger if exists trg_bookings_updated_at on public.bookings;
+create trigger trg_bookings_updated_at
+  before update on public.bookings
+  for each row execute function public.set_updated_at();
+
+-- ---------------------------------------------------------
+-- 5.2 BẢNG booking_logs — nhật ký thao tác trên từng booking
+-- ---------------------------------------------------------
+create table if not exists public.booking_logs (
+  id           uuid primary key default gen_random_uuid(),
+  booking_id   uuid not null references public.bookings(id) on delete cascade,
+  action       text not null,
+  detail       jsonb,
+  created_at   timestamptz not null default now()
+);
+create index if not exists idx_booking_logs_booking on public.booking_logs(booking_id);
+
+-- ---------------------------------------------------------
+-- 5.3 BẢNG booking_history — lưu vết booking đã kết thúc/huỷ,
+-- dùng cho Tra cứu (lịch sử Booking) trong Dashboard
+-- ---------------------------------------------------------
+create table if not exists public.booking_history (
+  id              uuid primary key default gen_random_uuid(),
+  booking_id      uuid not null,
+  code            text,
+  account_id      text not null,
+  account_name    text not null,
+  customer_name   text not null default '',
+  phone           text not null default '',
+  telegram        text not null default '',
+  zalo            text not null default '',
+  start_time      timestamptz not null,
+  end_time        timestamptz not null,
+  duration_hours  numeric not null,
+  amount          numeric not null default 0,
+  final_status    text not null,
+  created_at      timestamptz not null default now()
+);
+create index if not exists idx_booking_history_booking on public.booking_history(booking_id);
+create index if not exists idx_booking_history_account on public.booking_history(account_id);
+create index if not exists idx_booking_history_phone   on public.booking_history(phone);
+
+-- ---------------------------------------------------------
+-- 5.4 TRIGGER: khi booking chuyển sang completed/cancelled,
+-- tự copy snapshot sang booking_history + ghi log (không phải xử lý
+-- ở JS để đảm bảo không bao giờ bị bỏ sót nếu client lỗi/mất mạng)
+-- ---------------------------------------------------------
+create or replace function public.fn_booking_status_change()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if new.status is distinct from old.status then
+    insert into public.booking_logs (booking_id, action, detail)
+    values (
+      new.id,
+      'status_change',
+      jsonb_build_object('from', old.status, 'to', new.status)
+    );
+
+    if new.status in ('completed','cancelled') then
+      insert into public.booking_history (
+        booking_id, code, account_id, account_name, customer_name,
+        phone, telegram, zalo, start_time, end_time, duration_hours,
+        amount, final_status
+      ) values (
+        new.id, new.code, new.account_id, new.account_name, new.customer_name,
+        new.phone, new.telegram, new.zalo, new.start_time, new.end_time,
+        new.duration_hours, new.amount, new.status
+      );
+    end if;
+
+    if new.status = 'pending' and old.status is null then
+      null; -- insert case handled by fn_booking_insert_log
+    end if;
+
+    insert into public.notifications (type, message)
+    values (
+      case new.status
+        when 'confirmed' then 'booking_confirmed'
+        when 'cancelled' then 'booking_cancelled'
+        when 'active' then 'booking_active'
+        when 'completed' then 'booking_completed'
+        else 'booking_update'
+      end,
+      case new.status
+        when 'confirmed' then 'Booking ' || coalesce(new.code,'') || ' đã được xác nhận'
+        when 'cancelled' then 'Booking ' || coalesce(new.code,'') || ' đã bị huỷ'
+        when 'active' then 'Booking ' || coalesce(new.code,'') || ' đã bắt đầu thuê'
+        when 'completed' then 'Booking ' || coalesce(new.code,'') || ' đã hoàn tất'
+        else 'Booking ' || coalesce(new.code,'') || ' cập nhật trạng thái'
+      end
+    );
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_booking_status_change on public.bookings;
+create trigger trg_booking_status_change
+  after update on public.bookings
+  for each row execute function public.fn_booking_status_change();
+
+create or replace function public.fn_booking_insert_log()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  insert into public.booking_logs (booking_id, action, detail)
+  values (new.id, 'created', jsonb_build_object(
+    'account_id', new.account_id,
+    'start_time', new.start_time,
+    'end_time', new.end_time,
+    'duration_hours', new.duration_hours
+  ));
+  insert into public.notifications (type, message)
+  values ('booking_created', 'Có booking mới: ' || coalesce(new.code,'') || ' — ' || new.account_name);
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_booking_insert_log on public.bookings;
+create trigger trg_booking_insert_log
+  after insert on public.bookings
+  for each row execute function public.fn_booking_insert_log();
+
+-- ---------------------------------------------------------
+-- 5.5 RPC create_booking — tạo booking an toàn tuyệt đối trước
+-- race condition. Nếu 2 khách đặt trùng giờ cùng lúc, giao dịch
+-- đến sau sẽ nhận lỗi rõ ràng (SQLSTATE 23P01) thay vì tạo ra
+-- 2 booking chồng chéo.
+-- ---------------------------------------------------------
+create or replace function public.create_booking(
+  p_account_id     text,
+  p_account_name   text,
+  p_customer_name  text,
+  p_phone          text,
+  p_telegram       text,
+  p_zalo           text,
+  p_start_time     timestamptz,
+  p_end_time       timestamptz,
+  p_duration_hours numeric,
+  p_amount         numeric,
+  p_notes          text default ''
+)
+returns public.bookings
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_booking public.bookings;
+  v_code    text;
+begin
+  if p_end_time <= p_start_time then
+    raise exception 'INVALID_TIME_RANGE' using errcode = '22007';
+  end if;
+
+  v_code := 'BK' || to_char(now(), 'YYMMDD') || lpad(floor(random()*10000)::text, 4, '0');
+
+  begin
+    insert into public.bookings (
+      code, account_id, account_name, customer_name, phone, telegram, zalo,
+      start_time, end_time, duration_hours, amount, notes, status
+    ) values (
+      v_code, p_account_id, p_account_name, p_customer_name, p_phone, p_telegram, p_zalo,
+      p_start_time, p_end_time, p_duration_hours, p_amount, p_notes, 'pending'
+    )
+    returning * into v_booking;
+  exception
+    when exclusion_violation then
+      raise exception 'BOOKING_TIME_CONFLICT' using errcode = '23P01';
+  end;
+
+  return v_booking;
+end;
+$$;
+
+grant execute on function public.create_booking(text,text,text,text,text,text,timestamptz,timestamptz,numeric,numeric,text) to anon, authenticated;
+
+-- ---------------------------------------------------------
+-- 5.6 RPC extend_booking — gia hạn booking nếu phía sau còn trống.
+-- Dựa vào chính EXCLUDE CONSTRAINT ở trên để đảm bảo an toàn: nếu
+-- khung giờ mới đè lên booking khác, update sẽ tự bị Postgres từ
+-- chối (23P01) mà không cần kiểm tra thủ công trước.
+-- ---------------------------------------------------------
+create or replace function public.extend_booking(
+  p_booking_id uuid,
+  p_extra_hours numeric
+)
+returns public.bookings
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_booking public.bookings;
+begin
+  begin
+    update public.bookings
+    set end_time = end_time + make_interval(secs => p_extra_hours * 3600),
+        duration_hours = duration_hours + p_extra_hours
+    where id = p_booking_id
+      and status in ('pending','confirmed','active')
+    returning * into v_booking;
+  exception
+    when exclusion_violation then
+      raise exception 'BOOKING_TIME_CONFLICT' using errcode = '23P01';
+  end;
+
+  if v_booking.id is null then
+    raise exception 'BOOKING_NOT_FOUND_OR_CLOSED' using errcode = 'P0002';
+  end if;
+
+  insert into public.booking_logs (booking_id, action, detail)
+  values (p_booking_id, 'extended', jsonb_build_object('extra_hours', p_extra_hours));
+
+  return v_booking;
+end;
+$$;
+
+grant execute on function public.extend_booking(uuid, numeric) to anon, authenticated;
+
+-- ---------------------------------------------------------
+-- 5.7 RPC check_account_availability — trả về danh sách các
+-- booking đang chiếm chỗ của 1 account trong 1 khoảng thời gian,
+-- dùng để vẽ Timeline (🟢 Trống / 🟡 Đã đặt / 🔴 Đang thuê) phía JS.
+-- ---------------------------------------------------------
+create or replace function public.check_account_availability(
+  p_account_id text,
+  p_from       timestamptz,
+  p_to         timestamptz
+)
+returns setof public.bookings
+language sql
+security definer
+set search_path = public
+as $$
+  select * from public.bookings
+  where account_id = p_account_id
+    and status in ('pending','confirmed','active')
+    and time_range && tstzrange(p_from, p_to, '[)')
+  order by start_time asc;
+$$;
+
+grant execute on function public.check_account_availability(text, timestamptz, timestamptz) to anon, authenticated;
+
+-- ---------------------------------------------------------
+-- 5.8 RLS — cùng mô hình mở như các bảng hiện có (kiểm tra logic
+-- nằm ở JS/RPC phía client, không đổi mô hình bảo mật hiện tại)
+-- ---------------------------------------------------------
+alter table public.bookings         enable row level security;
+alter table public.booking_logs     enable row level security;
+alter table public.booking_history  enable row level security;
+
+drop policy if exists bookings_select_all on public.bookings;
+create policy bookings_select_all on public.bookings for select using (true);
+drop policy if exists bookings_write_all on public.bookings;
+create policy bookings_write_all on public.bookings for all using (true) with check (true);
+
+drop policy if exists booking_logs_select_all on public.booking_logs;
+create policy booking_logs_select_all on public.booking_logs for select using (true);
+drop policy if exists booking_logs_write_all on public.booking_logs;
+create policy booking_logs_write_all on public.booking_logs for all using (true) with check (true);
+
+drop policy if exists booking_history_select_all on public.booking_history;
+create policy booking_history_select_all on public.booking_history for select using (true);
+drop policy if exists booking_history_write_all on public.booking_history;
+create policy booking_history_write_all on public.booking_history for all using (true) with check (true);
+
+-- ---------------------------------------------------------
+-- 5.9 REALTIME — bật đồng bộ tức thời cho 3 bảng mới
+-- ---------------------------------------------------------
+do $$
+begin
+  begin
+    alter publication supabase_realtime add table public.bookings;
+  exception when duplicate_object then null;
+  end;
+  begin
+    alter publication supabase_realtime add table public.booking_logs;
+  exception when duplicate_object then null;
+  end;
+  begin
+    alter publication supabase_realtime add table public.booking_history;
+  exception when duplicate_object then null;
+  end;
+end $$;
+
+-- =========================================================
+-- HẾT MIGRATION 5 — Sau khi chạy, vào Database > Replication
+-- và bật Realtime cho bookings, booking_logs, booking_history
+-- nếu chưa tự bật.
+-- =========================================================
+
+-- =========================================================
+-- MIGRATION 6 — Ribbon (HOT/VIP/NEW/SALE) hiển thị trên Card Account
+-- Idempotent, additive, không mất dữ liệu.
+-- =========================================================
+alter table public.accounts add column if not exists ribbon text;
+alter table public.accounts drop constraint if exists accounts_ribbon_check;
+alter table public.accounts add constraint accounts_ribbon_check
+  check (ribbon is null or ribbon in ('HOT','VIP','NEW','SALE'));
