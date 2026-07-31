@@ -825,7 +825,7 @@ table.lookup-table tbody tr:hover{background:rgba(15,23,42,0.035);}
   <section class="hero">
     <div class="wrap">
       <span class="eyebrow"><span class="dot"></span>6 TÀI KHOẢN VIP · SẴN SÀNG THUÊ</span>
-      <h1>Thuê tài khoản Free Fire <em>full skin, full VIP</em> theo giờ.</h1>
+      <h1>Thuê tài khoản Free Fire theo giờ.</h1>
       <p class="lead">Danh sách acc được kiểm định thủ công, đầy đủ trang phục, súng và pet hiếm. Chọn gói giờ phù hợp, thanh toán QR trong vài giây và nhận acc ngay lập tức.</p>
       <div class="cta-row">
         <a href="#danh-sach" class="btn btn-primary" data-ripple>Thuê ngay</a>
@@ -1408,11 +1408,28 @@ function showToast(msg){
 /* =========================================================
    PURCHASE FLOW
 ========================================================= */
-const payOverlay = document.getElementById('success-overlay') ? document.getElementById('pay-overlay') : null;
 const paymentOverlay = document.getElementById('pay-overlay');
 const successOverlay = document.getElementById('success-overlay');
 let currentOrder = null;
 let countdownInterval = null;
+
+/* Lịch sử đơn thuê của khách — lưu vào localStorage để không mất sau F5 */
+const ORDER_HISTORY_KEY = 'accvault_order_history';
+function getOrderHistory(){
+  try{ return JSON.parse(localStorage.getItem(ORDER_HISTORY_KEY) || '[]'); }
+  catch(e){ return []; }
+}
+function saveOrderToHistory(entry){
+  try{
+    const list = getOrderHistory().filter(o=>o.code !== entry.code);
+    list.unshift(entry);
+    localStorage.setItem(ORDER_HISTORY_KEY, JSON.stringify(list.slice(0,30)));
+  }catch(e){}
+}
+function getLastOrderFromHistory(){
+  const list = getOrderHistory();
+  return list.length ? list[0] : null;
+}
 
 function openModal(overlay){ overlay.classList.add('open'); document.body.style.overflow='hidden'; }
 function closeModal(overlay){ overlay.classList.remove('open'); document.body.style.overflow=''; }
@@ -1526,6 +1543,11 @@ document.getElementById('paid-btn').addEventListener('click', async ()=>{
       order_id: order.id
     });
     if(notifErr) logSbError('insert notification error', notifErr);
+
+    saveOrderToHistory({
+      code, order_id: order.id, account_id: acc.id, account_name: acc.name,
+      hours: Number(hours), amount, created_at: order.created_at || new Date().toISOString()
+    });
 
     clearInterval(countdownInterval);
     closeModal(paymentOverlay);
@@ -2806,6 +2828,17 @@ function bindBookingRealtime(){
   catch(err){ console.error('[Supabase] realtime bind error:', err?.message || String(err)); }
   try{ bindBookingRealtime(); }
   catch(err){ console.error('[Supabase] booking realtime bind error:', err?.message || String(err)); }
+
+  try{
+    const lastOrder = getLastOrderFromHistory();
+    if(lastOrder && lastOrder.created_at){
+      const ageMs = Date.now() - new Date(lastOrder.created_at).getTime();
+      if(ageMs >= 0 && ageMs <= 10*60*1000){
+        document.getElementById('order-code').textContent = lastOrder.code;
+        openModal(successOverlay);
+      }
+    }
+  } catch(err){ console.error('[Supabase] restore order history error:', err?.message || String(err)); }
 })();
 </script>
 </body>
