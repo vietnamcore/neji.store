@@ -1503,15 +1503,59 @@ adminOpenBtn.addEventListener('click', ()=>{
 document.getElementById('admin-login-close').addEventListener('click', ()=>closeModal(adminLoginOverlay));
 adminLoginOverlay.addEventListener('click', (e)=>{ if(e.target===adminLoginOverlay) closeModal(adminLoginOverlay); });
 
+/* BUG FIX: trước đây mọi lỗi RPC (không tồn tại RPC, thiếu quyền EXECUTE,
+   RLS chặn, lỗi Internet thật sự, lỗi Supabase server...) đều bị gộp chung
+   thành 1 câu "Lỗi kết nối, vui lòng thử lại." khiến không thể biết nguyên
+   nhân thật. Hàm này phân loại lỗi dựa trên error.code / error.message của
+   Supabase (PostgREST) để hiển thị đúng loại lỗi cho người dùng, đồng thời
+   log đầy đủ message/code/details/hint ra console (không bao giờ log thẳng
+   object gốc để tránh hiện "[object Object]"). */
+function classifyAdminLoginError(error){
+  const { msg, code } = sbErrorInfo(error);
+  const lowerMsg = (msg || '').toLowerCase();
+
+  // Không có mạng / không kết nối được tới Supabase (fetch bị reject trước
+  // khi có phản hồi HTTP nào — TypeError "Failed to fetch"/"NetworkError").
+  if(!navigator.onLine || lowerMsg.includes('failed to fetch') || lowerMsg.includes('networkerror') || lowerMsg.includes('load failed')){
+    return 'Không có kết nối Internet. Vui lòng kiểm tra mạng và thử lại.';
+  }
+  // RPC verify_admin_login chưa được tạo trong database (chưa chạy SQL).
+  if(code === 'PGRST202' || code === '42883' || lowerMsg.includes('could not find the function') || lowerMsg.includes('does not exist')){
+    return 'Chức năng đăng nhập chưa được cài đặt trên database (thiếu RPC verify_admin_login). Vui lòng chạy lại database.sql.';
+  }
+  // Thiếu quyền EXECUTE / bị RLS chặn.
+  if(code === '42501' || lowerMsg.includes('permission denied')){
+    return 'Không có quyền gọi chức năng đăng nhập (thiếu GRANT EXECUTE). Vui lòng kiểm tra cấu hình database.';
+  }
+  // Lỗi phía server Supabase (5xx) hoặc project bị pause/tạm ngưng.
+  if(code === '503' || code === '500' || lowerMsg.includes('service unavailable') || lowerMsg.includes('upstream')){
+    return 'Máy chủ Supabase đang gặp sự cố hoặc dự án đang tạm ngưng. Vui lòng thử lại sau.';
+  }
+  // Không rõ nguyên nhân — vẫn hiện chi tiết thay vì câu chung chung.
+  return 'Lỗi hệ thống khi đăng nhập: ' + (msg || 'không rõ nguyên nhân') + (code ? ` (mã lỗi: ${code})` : '');
+}
+
 async function tryAdminLogin(){
   const pwd = adminPasswordInput.value;
   if(!pwd) return;
   adminLoginBtn.disabled = true;
   try{
-    const { data, error } = await sb.rpc('verify_admin_login', { p_username: 'admin', p_password: pwd });
+    let data, error;
+    try{
+      ({ data, error } = await sb.rpc('verify_admin_login', { p_username: 'admin', p_password: pwd }));
+    } catch(thrown){
+      // BUG FIX: trước đây không có catch cho exception ném ra trực tiếp
+      // (vd lỗi mạng cấp thấp trước khi Supabase kịp trả về {error}),
+      // khiến login bị treo im lặng (unhandled promise rejection) mà
+      // không hiện thông báo gì. Giờ luôn bắt và phân loại được.
+      logSbError('verify_admin_login exception', thrown);
+      adminLoginError.textContent = classifyAdminLoginError(thrown);
+      adminLoginError.classList.add('show');
+      return;
+    }
     if(error){
       logSbError('verify_admin_login error', error);
-      adminLoginError.textContent = 'Lỗi kết nối, vui lòng thử lại.';
+      adminLoginError.textContent = classifyAdminLoginError(error);
       adminLoginError.classList.add('show');
       return;
     }

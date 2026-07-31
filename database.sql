@@ -251,9 +251,14 @@ alter table public.orders add constraint orders_status_check
   check (status in ('holding','unconfirmed','confirmed','rejected','expired','cancelled'));
 
 -- ---- storage bucket cho ảnh acc (bìa + gallery) ----
+-- BUG FIX: nếu bucket 'acc-gallery' đã tồn tại từ trước (vd tạo tay ở
+-- Dashboard) với public=false, "on conflict do nothing" sẽ KHÔNG bật
+-- public cho bucket đó => getPublicUrl() sinh URL nhưng ảnh trả về lỗi
+-- 400/403 (Bucket not found / not public) => ảnh không hiển thị trên
+-- website. Sửa thành upsert để luôn ép bucket này về public = true.
 insert into storage.buckets (id, name, public)
 values ('acc-gallery','acc-gallery', true)
-on conflict (id) do nothing;
+on conflict (id) do update set public = true;
 
 drop policy if exists "acc-gallery public read" on storage.objects;
 create policy "acc-gallery public read" on storage.objects
@@ -298,6 +303,14 @@ $$;
 revoke all on public.admin_users from anon, authenticated;
 grant execute on function public.verify_admin_login(text, text) to anon, authenticated;
 
+-- BUG FIX: PostgREST chỉ cho phép gọi RPC nếu role có quyền EXECUTE
+-- VÀ PostgREST role thực thi request (mặc định là "anon" cho request
+-- không kèm JWT) cũng cần quyền USAGE trên schema public. Một số
+-- project Supabase cũ thiếu quyền này khiến RPC báo lỗi "permission
+-- denied for schema public" (code 42501) thay vì lỗi mạng thật sự.
+-- Cấp lại tường minh để chắc chắn verify_admin_login luôn gọi được.
+grant usage on schema public to anon, authenticated;
+
 -- ---- đảm bảo bảng accounts cũng nằm trong Realtime publication ----
 -- (đã có ở migration 1, giữ lại idempotent-safe ở đây phòng trường hợp
 --  publication bị tạo lại)
@@ -319,3 +332,13 @@ drop trigger if exists trg_orders_updated_at on public.orders;
 create trigger trg_orders_updated_at
   before update on public.orders
   for each row execute function public.set_updated_at();
+
+-- =========================================================
+-- MIGRATION 4 — BUG FIX: bucket 'acc-gallery' có thể đã được tạo
+-- thủ công trước khi chạy migration 2 (public=false theo mặc định
+-- của Supabase Dashboard). Ép lại public=true một lần nữa ở đây để
+-- đảm bảo ảnh cover/gallery luôn truy cập được qua getPublicUrl(),
+-- kể cả trên project đã tồn tại từ trước khi có dòng "on conflict
+-- do update" ở migration 2.
+-- =========================================================
+update storage.buckets set public = true where id = 'acc-gallery';
