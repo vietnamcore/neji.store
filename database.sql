@@ -233,3 +233,89 @@ end $$;
 -- HẾT — Sau khi chạy file này, vào Database > Replication trong Supabase
 -- và đảm bảo 4 bảng accounts, orders, notifications, rentals đã bật Realtime.
 -- =========================================================
+
+-- =========================================================
+-- MIGRATION 2 — bổ sung cột còn thiếu cho tính năng Gallery /
+-- Mô tả / Đăng nhập Admin an toàn / Hủy đơn.
+-- Idempotent — chạy lại không lỗi.
+-- =========================================================
+
+-- ---- accounts: ảnh bìa, gallery, mô tả ----
+alter table public.accounts add column if not exists description text not null default '';
+alter table public.accounts add column if not exists cover_url   text;
+alter table public.accounts add column if not exists gallery     jsonb not null default '[]'::jsonb;
+
+-- ---- orders: thêm trạng thái 'cancelled' cho thao tác Hủy đơn ----
+alter table public.orders drop constraint if exists orders_status_check;
+alter table public.orders add constraint orders_status_check
+  check (status in ('holding','unconfirmed','confirmed','rejected','expired','cancelled'));
+
+-- ---- storage bucket cho ảnh acc (bìa + gallery) ----
+insert into storage.buckets (id, name, public)
+values ('acc-gallery','acc-gallery', true)
+on conflict (id) do nothing;
+
+drop policy if exists "acc-gallery public read" on storage.objects;
+create policy "acc-gallery public read" on storage.objects
+  for select using (bucket_id = 'acc-gallery');
+
+drop policy if exists "acc-gallery public write" on storage.objects;
+create policy "acc-gallery public write" on storage.objects
+  for all using (bucket_id = 'acc-gallery') with check (bucket_id = 'acc-gallery');
+
+-- ---- admin_users: xác thực đăng nhập Dashboard qua RPC, không
+-- expose mật khẩu (hash) cho client, không hardcode mật khẩu trong JS ----
+create table if not exists public.admin_users (
+  id            uuid primary key default gen_random_uuid(),
+  username      text unique not null,
+  password_hash text not null,
+  created_at    timestamptz not null default now()
+);
+
+-- Tài khoản mặc định: admin / password (đổi ngay sau khi đăng nhập lần đầu
+-- bằng cách chạy lại lệnh update bên dưới với mật khẩu mới của bạn)
+insert into public.admin_users (username, password_hash)
+values ('admin', crypt('password', gen_salt('bf')))
+on conflict (username) do nothing;
+
+alter table public.admin_users enable row level security;
+-- Không có policy select/write nào cho anon/authenticated => client
+-- không thể đọc bảng này trực tiếp, chỉ có thể gọi qua RPC bên dưới.
+
+create or replace function public.verify_admin_login(p_username text, p_password text)
+returns boolean
+language sql
+security definer
+set search_path = public
+as $$
+  select exists(
+    select 1 from public.admin_users
+    where username = p_username
+      and password_hash = crypt(p_password, password_hash)
+  );
+$$;
+
+revoke all on public.admin_users from anon, authenticated;
+grant execute on function public.verify_admin_login(text, text) to anon, authenticated;
+
+-- ---- đảm bảo bảng accounts cũng nằm trong Realtime publication ----
+-- (đã có ở migration 1, giữ lại idempotent-safe ở đây phòng trường hợp
+--  publication bị tạo lại)
+do $$
+begin
+  begin
+    alter publication supabase_realtime add table public.accounts;
+  exception when duplicate_object then null;
+  end;
+end $$;
+
+-- =========================================================
+-- MIGRATION 3 — orders.updated_at (dùng cho cột "Ngày cập nhật"
+-- trong tab Tra cứu của Dashboard)
+-- =========================================================
+alter table public.orders add column if not exists updated_at timestamptz not null default now();
+
+drop trigger if exists trg_orders_updated_at on public.orders;
+create trigger trg_orders_updated_at
+  before update on public.orders
+  for each row execute function public.set_updated_at();
