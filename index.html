@@ -381,7 +381,7 @@ main{position:relative;z-index:2;}
 .hour-slot.selected{background:var(--grad-accent);color:#04121c;border-color:transparent;font-weight:700;}
 .hour-slot.taken{background:rgba(239,68,68,0.12);color:rgba(185,28,28,0.85);cursor:not-allowed;}
 
-.duration-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:16px;}
+.duration-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:16px;}
 .duration-chip{padding:10px 6px;text-align:center;border-radius:var(--radius-sm);border:1px solid var(--line-strong);font-size:13px;font-weight:600;color:var(--mute);transition:all 0.2s var(--ease);}
 .duration-chip:hover{border-color:var(--green-400);color:var(--white);}
 .duration-chip.active{background:var(--grad-accent);color:#04121c;border-color:transparent;}
@@ -421,6 +421,9 @@ main{position:relative;z-index:2;}
 .price-row .price{font-family:var(--font-mono);font-weight:700;font-size:23px;color:var(--white);transition:opacity 0.2s var(--ease);}
 .price-row .price small{font-family:var(--font-body);font-weight:500;font-size:12px;color:var(--mute-2);margin-left:3px;}
 .price-row .per{font-size:12px;color:var(--mute-2);}
+.old-price{font-family:var(--font-mono);font-weight:500;font-size:0.72em;color:var(--mute-2);text-decoration:line-through;margin-right:7px;display:inline-block;}
+.new-price{color:inherit;}
+.discount-badge{display:inline-block;vertical-align:middle;margin-left:6px;padding:2px 8px;border-radius:999px;font-size:10.5px;font-weight:700;line-height:1.5;background:rgba(239,68,68,0.14);color:var(--danger,#ef4444);border:1px solid rgba(239,68,68,0.35);white-space:nowrap;}
 .price.flash{animation:priceFlash 0.4s var(--ease);}
 @keyframes priceFlash{0%{opacity:0.2;transform:translateY(2px);}100%{opacity:1;transform:translateY(0);}}
 
@@ -711,7 +714,7 @@ footer a.foot-link:hover{color:var(--green-400);}
 .admin-form-row{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
 .admin-textarea{width:100%;min-height:70px;padding:12px 14px;background:var(--panel-2);border:1px solid var(--line-strong);border-radius:var(--radius-sm);color:var(--white);font-family:var(--font-body);font-size:13.5px;resize:vertical;}
 .admin-textarea:focus, .admin-input:focus{border-color:var(--green-500);}
-.admin-price-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;}
+.admin-price-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;}
 .admin-price-grid .admin-input{padding:9px 10px;font-size:12.5px;letter-spacing:0;text-align:center;}
 .admin-mini-btn{padding:8px 12px;border-radius:var(--radius-sm);border:1px solid var(--line-strong);font-size:11.5px;font-weight:600;letter-spacing:0.02em;color:var(--white);background:rgba(15,23,42,0.045);transition:all 0.25s var(--ease);white-space:nowrap;}
 .admin-mini-btn:hover{border-color:var(--green-400);color:var(--green-400);}
@@ -902,17 +905,18 @@ table.lookup-table tbody tr:hover{background:rgba(15,23,42,0.035);}
 
 <button id="back-top" aria-label="Lên đầu trang"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button>
 
-<!-- PAYMENT MODAL -->
+<!-- PAYMENT MODAL (dùng chung cho Thuê ngay & Đặt lịch trước) -->
 <div class="modal-overlay" id="pay-overlay">
   <div class="modal">
     <button class="modal-close" id="pay-close" aria-label="Đóng"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
-    <h3 class="modal-title">Thanh toán</h3>
+    <h3 class="modal-title" id="pay-title">Thanh toán</h3>
 
     <div class="pay-summary">
       <img id="pay-img" src="" alt="">
       <div class="info">
         <h4 id="pay-name"></h4>
         <div class="meta" id="pay-package"></div>
+        <div class="meta" id="pay-schedule"></div>
         <div class="amt" id="pay-amount"></div>
       </div>
     </div>
@@ -927,7 +931,8 @@ table.lookup-table tbody tr:hover{background:rgba(15,23,42,0.035);}
       <div class="bank-row"><span class="k">Ngân hàng</span><span class="v">BIDV — PGD</span></div>
       <div class="bank-row"><span class="k">Chủ tài khoản</span><span class="v">MAI ĐẶNG PHƯỚC THỊNH</span></div>
       <div class="bank-row"><span class="k">Số tài khoản</span><span class="v" style="display:flex;align-items:center;gap:8px;"><span id="pay-stk">8865743051</span><button type="button" class="copy-mini" id="copy-stk-btn">SAO CHÉP</button></span></div>
-      <div class="bank-row"><span class="k">Nội dung CK</span><span class="v" id="pay-content"></span></div>
+      <div class="bank-row"><span class="k">Nội dung CK</span><span class="v" style="display:flex;align-items:center;gap:8px;"><span id="pay-content"></span><button type="button" class="copy-mini" id="copy-content-btn">SAO CHÉP</button></span></div>
+      <div class="bank-row"><span class="k">Mã chuyển khoản</span><span class="v" style="display:flex;align-items:center;gap:8px;"><span id="pay-code"></span><button type="button" class="copy-mini" id="copy-paycode-btn">SAO CHÉP</button></span></div>
     </div>
 
     <button class="btn btn-primary btn-block" id="paid-btn" data-ripple>ĐÃ THANH TOÁN</button>
@@ -1166,14 +1171,16 @@ window.addEventListener('load', ()=>{
 /* =========================================================
    RENDER ACCOUNT CARDS
 ========================================================= */
-function accStatusBadgeHTML(status){
-  if(status === 'maintenance') return '<span class="badge maintenance"><span class="dot"></span>Bảo trì</span>';
-  if(status === 'rented') return '<span class="badge rented"><span class="dot"></span>Đang thuê</span>';
+function accStatusBadgeHTML(accId){
+  const st = getEffectiveAccountStatus(accId);
+  if(st.key === 'maintenance') return '<span class="badge maintenance"><span class="dot"></span>Bảo trì</span>';
+  if(st.key === 'rented') return '<span class="badge rented"><span class="dot"></span>Đang thuê</span>';
   return '<span class="badge available"><span class="dot"></span>Có sẵn</span>';
 }
-function accBuyButtonLabel(status){
-  if(status === 'maintenance') return 'ACC ĐANG BẢO TRÌ';
-  if(status === 'rented') return 'ACC ĐANG ĐƯỢC THUÊ';
+function accBuyButtonLabel(accId){
+  const st = getEffectiveAccountStatus(accId);
+  if(st.key === 'maintenance') return 'ACC ĐANG BẢO TRÌ';
+  if(st.key === 'rented') return 'ACC ĐANG ĐƯỢC THUÊ';
   return 'MUA NGAY';
 }
 function accImages(acc){
@@ -1196,7 +1203,7 @@ function renderAccCard(acc, i){
       <img src="${acc.img}" alt="${acc.name}" loading="lazy">
       ${ribbonHTML(acc)}
       <span class="plate"><span class="idx">#${String(i+1).padStart(2,'0')}</span> FF · VIP</span>
-      ${accStatusBadgeHTML(acc.status)}
+      ${accStatusBadgeHTML(acc.id)}
     </div>
     <div class="body">
       <div class="name-row">
@@ -1206,18 +1213,15 @@ function renderAccCard(acc, i){
       <div class="acc-next-slot" id="acc-next-slot-${acc.id}"><span class="dot-live free"></span><span>Đang tải lịch...</span></div>
       <span class="field-label">Chọn gói thuê</span>
       <div class="select-wrap">
-        <select class="pkg-select" data-acc="${acc.id}" ${acc.status!=='available'?'disabled':''}>
-          <option value="1">1 giờ</option>
-          <option value="2">2 giờ</option>
-          <option value="3">3 giờ</option>
-          <option value="4">4 giờ</option>
+        <select class="pkg-select" data-acc="${acc.id}" ${getEffectiveAccountStatus(acc.id).busy?'disabled':''}>
+          ${pkgSelectOptionsHTML()}
         </select>
       </div>
       <div class="price-row">
-        <div class="price" data-price="${acc.id}">${formatVND(acc.prices['1'])}<small>/ 1 giờ</small></div>
+        <div class="price" data-price="${acc.id}">${priceCardHTML(acc, '1')}</div>
       </div>
-      <button class="buy-btn" data-buy="${acc.id}" ${acc.status!=='available'?'disabled':''}>
-        ${accBuyButtonLabel(acc.status)}
+      <button class="buy-btn" data-buy="${acc.id}" ${getEffectiveAccountStatus(acc.id).busy?'disabled':''}>
+        ${accBuyButtonLabel(acc.id)}
       </button>
       <button type="button" class="booking-btn" data-booking-open="${acc.id}">
         <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
@@ -1247,18 +1251,18 @@ function updateAccCardUI(acc){
   if(img && acc.img) img.src = acc.img;
   const oldBadge = mediaEl.querySelector('.badge');
   if(oldBadge) oldBadge.remove();
-  mediaEl.insertAdjacentHTML('beforeend', accStatusBadgeHTML(acc.status));
+  mediaEl.insertAdjacentHTML('beforeend', accStatusBadgeHTML(acc.id));
+  const st = getEffectiveAccountStatus(acc.id);
   const sel = card.querySelector('.pkg-select');
-  if(sel) sel.disabled = acc.status !== 'available';
+  if(sel) sel.disabled = st.busy;
   const buyBtn = card.querySelector('.buy-btn');
   if(buyBtn){
-    buyBtn.disabled = acc.status !== 'available';
-    buyBtn.textContent = accBuyButtonLabel(acc.status);
+    buyBtn.disabled = st.busy;
+    buyBtn.textContent = accBuyButtonLabel(acc.id);
   }
   const priceEl = card.querySelector('.price');
   if(priceEl && sel){
-    const hours = sel.value;
-    priceEl.innerHTML = `${formatVND(acc.prices[hours])}<small>/ ${hours} giờ</small>`;
+    priceEl.innerHTML = priceCardHTML(acc, sel.value);
   }
   if(typeof renderNextSlot==='function') renderNextSlot(acc.id);
 }
@@ -1271,9 +1275,8 @@ grid.addEventListener('change', (e)=>{
   const acc = ACCOUNTS.find(a=>a.id===accId);
   if(!acc) return;
   const priceEl = document.querySelector(`.price[data-price="${accId}"]`);
-  const hours = sel.value;
   priceEl.classList.remove('flash'); void priceEl.offsetWidth; priceEl.classList.add('flash');
-  priceEl.innerHTML = `${formatVND(acc.prices[hours])}<small>/ ${hours} giờ</small>`;
+  priceEl.innerHTML = priceCardHTML(acc, sel.value);
 });
 
 /* =========================================================
@@ -1411,7 +1414,7 @@ function showToast(msg){
 ========================================================= */
 const paymentOverlay = document.getElementById('pay-overlay');
 const successOverlay = document.getElementById('success-overlay');
-let currentOrder = null;
+let currentPaymentContext = null; // { mode:'rent'|'booking', acc, hours, amount, ... }
 let countdownInterval = null;
 
 /* Lịch sử đơn thuê của khách — lưu vào localStorage để không mất sau F5 */
@@ -1446,20 +1449,46 @@ document.getElementById('acc-grid').addEventListener('click', (e)=>{
   const accId = btn.dataset.buy;
   const acc = ACCOUNTS.find(a=>a.id===accId);
   const sel = document.querySelector(`.pkg-select[data-acc="${accId}"]`);
-  const hours = sel.value;
-  const amount = acc.prices[hours];
+  openPaymentForRent(acc, sel.value);
+});
 
-  currentOrder = { acc, hours, amount };
+/* Mở Popup Thuê (giao diện thanh toán DUY NHẤT dùng chung với Popup Đặt lịch).
+   Tự kiểm tra xung đột với booking/rental tương lai trước khi mở — nếu acc
+   sẽ bị chiếm chỗ trong lúc thuê thì báo lỗi, không mở popup thanh toán. */
+async function openPaymentForRent(acc, hours){
+  if(!acc) return;
+  const st = getEffectiveAccountStatus(acc.id);
+  if(st.busy){ showToast('Acc hiện không có sẵn để thuê ngay.'); return; }
 
+  const h = Number(hours);
+  const start = new Date();
+  const end = new Date(start.getTime() + h*3600000);
+  const conflict = hasFutureConflict(acc.id, start, end);
+  if(conflict.conflict){
+    showToast(`Khung giờ này đã được đặt trước đến ${fmtHM(conflict.until)} ${fmtDDMM(conflict.until)}, vui lòng chọn gói ngắn hơn hoặc dùng Đặt lịch trước.`);
+    return;
+  }
+
+  const price = getPackagePrice(acc, h);
+  currentPaymentContext = { mode:'rent', acc, hours:h, amount:price.final, base:price.base, discounted:price.discounted, start, end };
+
+  document.getElementById('pay-title').textContent = 'Thanh toán — Thuê ngay';
   document.getElementById('pay-img').src = acc.img;
   document.getElementById('pay-name').textContent = acc.name;
-  document.getElementById('pay-package').textContent = `Gói thuê: ${hours} giờ`;
-  document.getElementById('pay-amount').textContent = formatVND(amount);
-  document.getElementById('pay-content').textContent = `FF-${acc.name.replace(' ','').toUpperCase()}-${hours}H`;
+  document.getElementById('pay-package').textContent = `Gói thuê: ${hoursLabel(h)}`;
+  document.getElementById('pay-schedule').innerHTML = `Bắt đầu: <b>Ngay bây giờ (${fmtHM(start)} ${fmtDDMM(start)})</b> · Kết thúc dự kiến: <b>${fmtHM(end)} ${fmtDDMM(end)}</b>`;
+  document.getElementById('pay-amount').innerHTML = priceAmountHTML(acc, h);
+
+  const tempCode = await genCode(0);
+  const content = `FF-${acc.name.replace(/\s+/g,'').toUpperCase()}-${h}H`;
+  document.getElementById('pay-content').textContent = content;
+  document.getElementById('pay-code').textContent = tempCode;
+  currentPaymentContext.code = tempCode;
+  currentPaymentContext.content = content;
 
   startCountdown(15*60);
   openModal(paymentOverlay);
-});
+}
 
 document.getElementById('pay-close').addEventListener('click', ()=>{
   closeModal(paymentOverlay);
@@ -1507,64 +1536,32 @@ async function genCode(attemptOffset){
   const seq = (count||0) + 1 + (attemptOffset||0);
   return `${prefix}-${String(seq).padStart(4,'0')}`;
 }
+/* Mã chuyển khoản tạm cho Đặt lịch trước — hiển thị ngay khi mở Popup
+   Thanh toán để khách ghi vào nội dung CK. Mã booking chính thức do
+   server (RPC create_booking) trả về sau khi xác nhận, hiển thị ở
+   Popup Thành công. */
+async function genBookingCode(attemptOffset){
+  const prefix = 'BK-' + todayCodePrefix().slice(3);
+  const { count, error } = await sb.from('bookings')
+    .select('id', { count:'exact', head:true })
+    .like('code', `${prefix}-%`);
+  if(error) logSbError('count bookings for code error', error);
+  const seq = (count||0) + 1 + (attemptOffset||0);
+  return `${prefix}-${String(seq).padStart(4,'0')}`;
+}
 
 let submittingOrder = false;
 document.getElementById('paid-btn').addEventListener('click', async ()=>{
-  if(submittingOrder || !currentOrder) return;
+  if(submittingOrder || !currentPaymentContext) return;
   submittingOrder = true;
   const btn = document.getElementById('paid-btn');
   btn.disabled = true;
   try{
-    const { acc, hours, amount } = currentOrder;
-
-    /* xác nhận acc vẫn còn trống ngay trước khi tạo đơn — tránh trùng khi
-       nhiều người đặt cùng lúc */
-    const { data: freshAcc, error: freshErr } = await sb.from('accounts').select('status').eq('id', acc.id).single();
-    if(freshErr || !freshAcc || freshAcc.status !== 'available'){
-      clearInterval(countdownInterval);
-      closeModal(paymentOverlay);
-      showToast('Acc vừa được thuê bởi người khác, vui lòng chọn acc khác.');
-      return;
+    if(currentPaymentContext.mode === 'booking'){
+      await finalizeBookingPayment();
+    } else {
+      await finalizeRentPayment();
     }
-
-    let code = '', order = null, lastErr = null;
-    for(let attempt=0; attempt<5 && !order; attempt++){
-      code = await genCode(attempt);
-      const { data, error } = await sb.from('orders').insert({
-        code, account_id: acc.id, account_name: acc.name,
-        package_hours: Number(hours), amount, status: 'unconfirmed'
-      }).select().single();
-      if(!error){ order = data; }
-      else { lastErr = error; if(error.code !== '23505') break; }
-    }
-    if(!order){
-      logSbError('insert order error', lastErr);
-      showToast('Lỗi tạo đơn thuê, vui lòng thử lại.');
-      return;
-    }
-
-    const { error: updErr } = await sb.from('accounts').update({ status:'rented' }).eq('id', acc.id);
-    if(updErr) logSbError('update account status error', updErr);
-
-    const { error: notifErr } = await sb.from('notifications').insert({
-      type: 'new_order',
-      message: `Đơn mới ${code} — ${acc.name} (${hours} giờ, ${formatVND(amount)})`,
-      order_id: order.id
-    });
-    if(notifErr) logSbError('insert notification error', notifErr);
-
-    saveOrderToHistory({
-      code, order_id: order.id, account_id: acc.id, account_name: acc.name,
-      hours: Number(hours), amount, created_at: order.created_at || new Date().toISOString()
-    });
-
-    clearInterval(countdownInterval);
-    closeModal(paymentOverlay);
-    document.getElementById('order-code').textContent = code;
-    const copyBtn = document.getElementById('copy-code-btn');
-    copyBtn.classList.remove('copied');
-    copyBtn.textContent = 'SAO CHÉP MÃ';
-    setTimeout(()=>openModal(successOverlay), 180);
   } catch(err){
     console.error('[Supabase] paid-btn flow error: ' + (err?.message ?? String(err)));
     showToast('Có lỗi xảy ra, vui lòng thử lại.');
@@ -1573,6 +1570,115 @@ document.getElementById('paid-btn').addEventListener('click', async ()=>{
     btn.disabled = false;
   }
 });
+
+async function finalizeRentPayment(){
+  const { acc, hours, amount, start, end, code:preCode } = currentPaymentContext;
+
+  /* xác nhận acc vẫn còn trống + không xung đột booking tương lai ngay
+     trước khi tạo đơn — tránh trùng khi nhiều người đặt cùng lúc */
+  const { data: freshAcc, error: freshErr } = await sb.from('accounts').select('status').eq('id', acc.id).single();
+  if(freshErr || !freshAcc || freshAcc.status !== 'available'){
+    clearInterval(countdownInterval);
+    closeModal(paymentOverlay);
+    showToast('Acc vừa được thuê bởi người khác, vui lòng chọn acc khác.');
+    return;
+  }
+  BOOKINGS = await fetchActiveBookings();
+  ACTIVE_RENTALS = await fetchActiveRentalsPublic();
+  const conflict = hasFutureConflict(acc.id, start, end);
+  if(conflict.conflict){
+    clearInterval(countdownInterval);
+    closeModal(paymentOverlay);
+    showToast('Khung giờ này vừa có người đặt trước, vui lòng chọn gói khác.');
+    return;
+  }
+
+  let code = '', order = null, lastErr = null;
+  for(let attempt=0; attempt<5 && !order; attempt++){
+    code = attempt===0 && preCode ? preCode : await genCode(attempt);
+    const { data, error } = await sb.from('orders').insert({
+      code, account_id: acc.id, account_name: acc.name,
+      package_hours: Number(hours), amount, status: 'unconfirmed'
+    }).select().single();
+    if(!error){ order = data; }
+    else { lastErr = error; if(error.code !== '23505') break; }
+  }
+  if(!order){
+    logSbError('insert order error', lastErr);
+    showToast('Lỗi tạo đơn thuê, vui lòng thử lại.');
+    return;
+  }
+
+  const { error: updErr } = await sb.from('accounts').update({ status:'rented' }).eq('id', acc.id);
+  if(updErr) logSbError('update account status error', updErr);
+
+  const { error: notifErr } = await sb.from('notifications').insert({
+    type: 'new_order',
+    message: `Đơn mới ${code} — ${acc.name} (${hoursLabel(hours)}, ${formatVND(amount)})`,
+    order_id: order.id
+  });
+  if(notifErr) logSbError('insert notification error', notifErr);
+
+  saveOrderToHistory({
+    code, order_id: order.id, account_id: acc.id, account_name: acc.name,
+    hours: Number(hours), amount, created_at: order.created_at || new Date().toISOString()
+  });
+
+  clearInterval(countdownInterval);
+  closeModal(paymentOverlay);
+  document.getElementById('order-code').textContent = code;
+  const copyBtn = document.getElementById('copy-code-btn');
+  copyBtn.classList.remove('copied');
+  copyBtn.textContent = 'SAO CHÉP MÃ';
+  setTimeout(()=>openModal(successOverlay), 180);
+}
+
+async function finalizeBookingPayment(){
+  const ctx = currentPaymentContext;
+  const conflict = hasFutureConflict(ctx.acc.id, ctx.range.start, ctx.range.end);
+  if(conflict.conflict){
+    clearInterval(countdownInterval);
+    closeModal(paymentOverlay);
+    showToast('Khung giờ này vừa có người đặt trước, vui lòng chọn khung giờ khác');
+    BOOKINGS = await fetchActiveBookings();
+    return;
+  }
+  const { data, error } = await sb.rpc('create_booking', {
+    p_account_id: ctx.acc.id,
+    p_account_name: ctx.acc.name,
+    p_customer_name: ctx.customer.name,
+    p_phone: ctx.customer.phone,
+    p_telegram: ctx.customer.telegram,
+    p_zalo: ctx.customer.zalo,
+    p_start_time: ctx.range.start.toISOString(),
+    p_end_time: ctx.range.end.toISOString(),
+    p_duration_hours: ctx.hours,
+    p_amount: ctx.amount,
+    p_notes: ''
+  });
+  if(error){
+    if(error.code === '23P01' || (error.message||'').includes('bookings_no_overlap')){
+      clearInterval(countdownInterval);
+      closeModal(paymentOverlay);
+      showToast('Khung giờ này vừa có người đặt trước, vui lòng chọn khung giờ khác');
+      BOOKINGS = await fetchActiveBookings();
+    } else {
+      logSbError('create_booking', error);
+      showToast('Đặt lịch thất bại: ' + (error.message||'lỗi không rõ'));
+    }
+    return;
+  }
+  clearInterval(countdownInterval);
+  closeModal(paymentOverlay);
+  document.getElementById('order-code').textContent = data.code;
+  const copyBtn = document.getElementById('copy-code-btn');
+  copyBtn.classList.remove('copied');
+  copyBtn.textContent = 'SAO CHÉP MÃ';
+  BOOKINGS = await fetchActiveBookings();
+  renderAllNextSlots();
+  refreshAllCardStatuses();
+  setTimeout(()=>openModal(successOverlay), 180);
+}
 
 document.getElementById('success-close').addEventListener('click', ()=>closeModal(successOverlay));
 successOverlay.addEventListener('click', (e)=>{ if(e.target===successOverlay) closeModal(successOverlay); });
@@ -1598,29 +1704,33 @@ document.getElementById('copy-code-btn').addEventListener('click', function(){
   }
 });
 
-const copyStkBtn = document.getElementById('copy-stk-btn');
-if(copyStkBtn){
-  copyStkBtn.addEventListener('click', function(){
-    const stk = document.getElementById('pay-stk').textContent.trim();
+function bindCopyMiniButton(btnId, sourceId, successMsg){
+  const btn = document.getElementById(btnId);
+  if(!btn) return;
+  btn.addEventListener('click', function(){
+    const text = document.getElementById(sourceId).textContent.trim();
     const finish = ()=>{
       this.textContent = 'ĐÃ CHÉP';
       this.classList.add('copied');
-      showToast('Đã sao chép số tài khoản');
+      showToast(successMsg);
       setTimeout(()=>{ this.textContent='SAO CHÉP'; this.classList.remove('copied'); }, 2200);
     };
     if(navigator.clipboard && navigator.clipboard.writeText){
-      navigator.clipboard.writeText(stk).then(finish).catch(()=>{
-        const ta=document.createElement('textarea'); ta.value=stk; document.body.appendChild(ta); ta.select();
+      navigator.clipboard.writeText(text).then(finish).catch(()=>{
+        const ta=document.createElement('textarea'); ta.value=text; document.body.appendChild(ta); ta.select();
         try{ document.execCommand('copy'); }catch(err){}
         ta.remove(); finish();
       });
     } else {
-      const ta=document.createElement('textarea'); ta.value=stk; document.body.appendChild(ta); ta.select();
+      const ta=document.createElement('textarea'); ta.value=text; document.body.appendChild(ta); ta.select();
       try{ document.execCommand('copy'); }catch(err){}
       ta.remove(); finish();
     }
   });
 }
+bindCopyMiniButton('copy-stk-btn', 'pay-stk', 'Đã sao chép số tài khoản');
+bindCopyMiniButton('copy-content-btn', 'pay-content', 'Đã sao chép nội dung chuyển khoản');
+bindCopyMiniButton('copy-paycode-btn', 'pay-code', 'Đã sao chép mã chuyển khoản');
 
 /* Escape key closes modals */
 document.addEventListener('keydown', (e)=>{
@@ -1659,8 +1769,9 @@ function openGallery(accId){
   galleryState = { accId, images: accImages(acc), index:0 };
   galleryTitle.textContent = acc.name;
   renderGalleryImage();
-  galleryBuyBtn.textContent = acc.status === 'available' ? 'MUA NGAY' : accBuyButtonLabel(acc.status);
-  galleryBuyBtn.disabled = acc.status !== 'available';
+  const st = getEffectiveAccountStatus(acc.id);
+  galleryBuyBtn.textContent = st.busy ? accBuyButtonLabel(acc.id) : 'MUA NGAY';
+  galleryBuyBtn.disabled = st.busy;
   openModal(galleryOverlay);
 }
 
@@ -1681,22 +1792,11 @@ galleryOverlay.addEventListener('click', (e)=>{ if(e.target===galleryOverlay) cl
 
 galleryBuyBtn.addEventListener('click', ()=>{
   const acc = ACCOUNTS.find(a=>a.id===galleryState.accId);
-  if(!acc || acc.status !== 'available') return;
+  if(!acc || getEffectiveAccountStatus(acc.id).busy) return;
   closeModal(galleryOverlay);
   const sel = document.querySelector(`.pkg-select[data-acc="${acc.id}"]`);
   const hours = sel ? sel.value : '1';
-  const amount = acc.prices[hours];
-
-  currentOrder = { acc, hours, amount };
-
-  document.getElementById('pay-img').src = acc.img;
-  document.getElementById('pay-name').textContent = acc.name;
-  document.getElementById('pay-package').textContent = `Gói thuê: ${hours} giờ`;
-  document.getElementById('pay-amount').textContent = formatVND(amount);
-  document.getElementById('pay-content').textContent = `FF-${acc.name.replace(' ','').toUpperCase()}-${hours}H`;
-
-  startCountdown(15*60);
-  openModal(paymentOverlay);
+  openPaymentForRent(acc, hours);
 });
 
 /* =========================================================
@@ -1852,9 +1952,10 @@ async function fetchTodayOrderStats(){
 
 function renderAdminStats(){
   const total = ACCOUNTS.length;
-  const available = ACCOUNTS.filter(a=>a.status==='available').length;
-  const rented = ACCOUNTS.filter(a=>a.status==='rented').length;
-  const maintenance = ACCOUNTS.filter(a=>a.status==='maintenance').length;
+  const effStatuses = ACCOUNTS.map(a=>getEffectiveAccountStatus(a.id).key);
+  const available = effStatuses.filter(k=>k==='available').length;
+  const rented = effStatuses.filter(k=>k==='rented').length;
+  const maintenance = effStatuses.filter(k=>k==='maintenance').length;
   document.getElementById('admin-stats').innerHTML = `
     <div class="admin-stat"><div class="n">${total}</div><div class="l">Tổng Acc</div></div>
     <div class="admin-stat"><div class="n">${available}</div><div class="l">Có sẵn</div></div>
@@ -1881,7 +1982,7 @@ function renderAdminList(){
       <div class="admin-acc-row-top">
         <div>
           <div class="name">${acc.name}</div>
-          <div class="cur-status">Trạng thái: ${ADMIN_STATUS_LABEL[acc.status]}</div>
+          <div class="cur-status">Trạng thái: ${getEffectiveAccountStatus(acc.id).label}</div>
         </div>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
           <select class="admin-status-select" data-acc="${acc.id}">
@@ -1894,12 +1995,13 @@ function renderAdminList(){
         </div>
       </div>
       <div class="admin-acc-row-body" id="admin-edit-${acc.id}">
-        <span class="admin-field-label">Giá theo giờ (1 / 2 / 3 / 4)</span>
+        <span class="admin-field-label">Giá gốc theo gói (dưới 6 giờ giữ nguyên giá — từ 6 giờ trở lên tự động giảm 40% khi hiển thị cho khách)</span>
         <div class="admin-price-grid">
-          <input class="admin-input" type="number" min="0" step="1000" data-price-field="1" value="${prices['1']||0}">
-          <input class="admin-input" type="number" min="0" step="1000" data-price-field="2" value="${prices['2']||0}">
-          <input class="admin-input" type="number" min="0" step="1000" data-price-field="3" value="${prices['3']||0}">
-          <input class="admin-input" type="number" min="0" step="1000" data-price-field="4" value="${prices['4']||0}">
+          ${PACKAGE_HOURS.map(h=>`
+          <label style="display:flex;flex-direction:column;gap:4px;">
+            <span style="font-size:10.5px;color:var(--mute-2);text-align:center;">${hoursLabel(h)}${h>=DISCOUNT_THRESHOLD_HOURS?' 🔥':''}</span>
+            <input class="admin-input" type="number" min="0" step="1000" data-price-field="${h}" value="${prices[String(h)]||0}">
+          </label>`).join('')}
         </div>
         <span class="admin-field-label">Tên hiển thị</span>
         <input class="admin-input" type="text" data-name-field value="${acc.name}">
@@ -1932,7 +2034,8 @@ function renderAdminList(){
       updateAccCardUI(acc);
       renderAdminStats();
       const row = sel.closest('.admin-acc-row');
-      if(row) row.querySelector('.cur-status').textContent = `Trạng thái: ${ADMIN_STATUS_LABEL[acc.status]}`;
+      if(row) row.querySelector('.cur-status').textContent = `Trạng thái: ${getEffectiveAccountStatus(acc.id).label}`;
+      refreshAllCardStatuses();
       showToast('Đã cập nhật trạng thái');
     });
   });
@@ -2038,7 +2141,7 @@ document.getElementById('admin-add-acc-btn').addEventListener('click', async ()=
   const id = 'acc_' + Date.now().toString(36);
   const { data, error } = await sb.from('accounts').insert({
     id, name: name.trim(), status:'available',
-    prices: { '1':30000, '2':50000, '3':60000, '4':80000 },
+    prices: { '1':30000, '2':50000, '3':60000, '4':80000, '6':150000, '12':280000, '24':500000, '48':900000, '72':1300000 },
     sort_order: ACCOUNTS.length + 1
   }).select().single();
   if(error){ logSbError('insert account error', error); showToast('Lỗi thêm acc mới'); return; }
@@ -2284,7 +2387,7 @@ function getFilteredSortedOrders(){
     if(f === '30d') return (now - new Date(o.created_at).getTime()) <= 30*86400000;
     if(f === 'rented' || f === 'available' || f === 'maintenance'){
       const acc = ACCOUNTS.find(a=>a.id===o.account_id);
-      return acc && acc.status === f;
+      return acc && getEffectiveAccountStatus(acc.id).key === f;
     }
     if(f === 'expired'){
       if(o._type === 'order') return o.status !== 'cancelled' && o.rentalStatusLabel === 'Đã hết hạn';
@@ -2671,7 +2774,92 @@ let BOOKINGS = []; // toàn bộ booking đang "chiếm chỗ" (pending/confirme
 let ACTIVE_RENTALS = []; // phiên thuê đang hoạt động (từ luồng "Thuê ngay") của mọi account
 const bookingOverlay = document.getElementById('booking-overlay');
 const bookingState = { accountId:null, accountName:'', date:new Date(), selectedHour:null, durationHours:1 };
-const DURATION_OPTIONS = [1,2,3,4,6,12,24];
+const PACKAGE_HOURS = [1,2,3,4,6,12,24,48,72];
+const DURATION_OPTIONS = PACKAGE_HOURS;
+const DISCOUNT_THRESHOLD_HOURS = 6;
+const DISCOUNT_RATE = 0.4;
+
+/* =========================================================
+   NGUỒN DỮ LIỆU + LOGIC DÙNG CHUNG DUY NHẤT
+   (Giá / Trạng thái / Thanh toán / QR / Booking / Thuê đều gọi
+   qua các hàm này — không được tính riêng ở bất kỳ nơi nào khác)
+========================================================= */
+function hoursLabel(h){ h = Number(h); return h>=24 ? (h/24)+' ngày' : h+' giờ'; }
+
+/* Giá gói thuê DUY NHẤT cho toàn bộ hệ thống.
+   - Dưới 6 giờ: giữ nguyên giá gốc admin đã nhập.
+   - Từ 6 giờ trở lên: tự động giảm 40% trên giá gốc.
+   - Nếu admin chưa nhập giá gốc cho gói đó: nội suy theo đơn giá giờ
+     thấp nhất đã niêm yết (không bịa giá mới), rồi mới áp giảm giá. */
+function getPackagePrice(acc, hours){
+  const h = Number(hours);
+  const prices = (acc && acc.prices) || {};
+  let base;
+  if(prices[String(h)] != null){
+    base = Number(prices[String(h)]);
+  } else {
+    const unit = Number(prices['4']||prices['1']||0) / (prices['4']?4:1);
+    base = Math.round(unit * h / 1000) * 1000;
+  }
+  const discounted = h >= DISCOUNT_THRESHOLD_HOURS;
+  const final = discounted ? Math.round(base*(1-DISCOUNT_RATE)/1000)*1000 : base;
+  return { base, final, discounted, percent: discounted ? Math.round(DISCOUNT_RATE*100) : 0 };
+}
+function priceAmountHTML(acc, hours){
+  const p = getPackagePrice(acc, hours);
+  if(p.discounted){
+    return `<span class="old-price">${formatVND(p.base)}</span>${formatVND(p.final)} <span class="discount-badge">🔥 Giảm ${p.percent}%</span>`;
+  }
+  return formatVND(p.final);
+}
+function priceCardHTML(acc, hours){
+  const p = getPackagePrice(acc, hours);
+  const label = hoursLabel(hours);
+  if(p.discounted){
+    return `<span class="old-price">${formatVND(p.base)}</span>${formatVND(p.final)}<small>/ ${label}</small> <span class="discount-badge">🔥 -${p.percent}%</span>`;
+  }
+  return `${formatVND(p.final)}<small>/ ${label}</small>`;
+}
+function pkgSelectOptionsHTML(){
+  return PACKAGE_HOURS.map(h=>`<option value="${h}">${hoursLabel(h)}</option>`).join('');
+}
+
+/* Trạng thái DUY NHẤT của 1 account — mọi nơi (Card, Popup Thuê,
+   Popup Đặt lịch, Dashboard) đều phải gọi hàm này, không tự suy ra
+   trạng thái riêng ở nơi khác. */
+function getEffectiveAccountStatus(accId){
+  const acc = ACCOUNTS.find(a=>a.id===accId);
+  if(!acc) return { key:'unknown', label:'—', busy:false, until:null };
+  if(acc.status === 'maintenance') return { key:'maintenance', label:'Bảo trì', busy:true, until:null };
+  const rental = activeRentalForAccount(accId);
+  if(rental) return { key:'rented', label:'Đang thuê', busy:true, until:new Date(rental.end_time) };
+  const now = new Date();
+  const activeBooking = bookingsForAccount(accId).find(b=>new Date(b.start_time)<=now && new Date(b.end_time)>now);
+  if(activeBooking) return { key:'rented', label:'Đang thuê', busy:true, until:new Date(activeBooking.end_time) };
+  if(acc.status === 'rented') return { key:'rented', label:'Đang thuê', busy:true, until:null };
+  return { key:'available', label:'Có sẵn', busy:false, until:null };
+}
+
+/* Kiểm tra 1 khoảng thời gian [start,end) có trùng với phiên thuê
+   đang hoạt động hoặc booking tương lai của account hay không —
+   dùng chung cho cả Popup Thuê (thuê ngay) và Popup Đặt lịch. */
+function hasFutureConflict(accId, start, end){
+  const rental = activeRentalForAccount(accId);
+  if(rental){
+    const s = new Date(rental.start_time), e = new Date(rental.end_time);
+    if(s < end && e > start) return { conflict:true, until:e };
+  }
+  const list = bookingsForAccount(accId);
+  for(const b of list){
+    const s = new Date(b.start_time), e = new Date(b.end_time);
+    if(s < end && e > start) return { conflict:true, until:e };
+  }
+  return { conflict:false };
+}
+
+function refreshAllCardStatuses(){
+  ACCOUNTS.forEach(acc=>{ if(typeof updateAccCardUI==='function') updateAccCardUI(acc); });
+}
 
 async function fetchActiveBookings(){
   const { data, error } = await sb.from('bookings').select('*').in('status',['pending','confirmed','active']).order('start_time',{ ascending:true });
@@ -2729,6 +2917,9 @@ function computeNextSlotInfo(accId){
     return { state:'busy', text:`Đang thuê đến ${fmtHM(active.e)} ${dayLabel(active.e)==='Hôm nay'?'':fmtDDMM(active.e)}`.trim() };
   }
   const upcoming = list.filter(b=>b.s>now).sort((a,b)=>a.s-b.s)[0];
+  if(acc && acc.status==='rented'){
+    return { state:'busy', text:'Đang thuê' };
+  }
   if(!upcoming) return { state:'free', text:'Trống cả ngày, đặt lịch ngay' };
   const soon = (upcoming.s - now) < 3600000;
   return { state: soon?'soon':'free', text:`${dayLabel(upcoming.s)} ${fmtHM(upcoming.s)}-${fmtHM(upcoming.e)}` };
@@ -2748,6 +2939,7 @@ function timelineSegmentsForDay(accId, day){
   const dayEnd = new Date(dayStart); dayEnd.setDate(dayEnd.getDate()+1);
   const acc = ACCOUNTS.find(a=>a.id===accId);
   const rental = activeRentalForAccount(accId);
+  const manualRented = !!(acc && acc.status==='rented' && !rental);
   const segs = [];
   for(let h=0; h<24; h++){
     const segStart = new Date(dayStart); segStart.setHours(h);
@@ -2766,6 +2958,8 @@ function timelineSegmentsForDay(accId, day){
         });
         if(overlap){
           cls = (new Date(overlap.start_time) <= now && new Date(overlap.end_time) > now) ? 'renting' : 'booked';
+        } else if(manualRented){
+          cls = 'renting';
         }
       }
     }
@@ -2862,24 +3056,19 @@ function computeBookingRange(){
 function computeBookingAmount(){
   const acc = ACCOUNTS.find(a=>a.id===bookingState.accountId);
   if(!acc) return 0;
-  const prices = acc.prices || {};
-  const h = bookingState.durationHours;
-  if(prices[String(h)] != null) return Number(prices[String(h)]);
-  // nội suy theo giá 1 giờ nếu gói giờ không có sẵn (2h, 3h, 4h đã có trong prices;
-  // với 6/12/24h dùng đơn giá giờ thấp nhất đã niêm yết để tính, không bịa giá mới)
-  const unit = Number(prices['4']||prices['1']||0) / (prices['4']?4:1);
-  return Math.round(unit * h / 1000) * 1000;
+  return getPackagePrice(acc, bookingState.durationHours).final;
 }
 function updateBookingSummary(){
   const range = computeBookingRange();
   const box = document.getElementById('booking-summary');
   if(!range){ box.innerHTML = 'Chọn khung giờ bắt đầu và thời lượng để xem tổng quan.'; return; }
   const overnight = range.start.getDate() !== range.end.getDate() || range.end.getMonth()!==range.start.getMonth();
-  const amount = computeBookingAmount();
+  const acc = ACCOUNTS.find(a=>a.id===bookingState.accountId);
+  const priceHTML = acc ? priceAmountHTML(acc, bookingState.durationHours) : formatVND(computeBookingAmount());
   box.innerHTML = `
     Từ <b>${fmtHM(range.start)} ${fmtDDMM(range.start)}</b> đến <b>${fmtHM(range.end)} ${fmtDDMM(range.end)}</b>
     ${overnight?'<span class="overnight-tag">Xuyên đêm/nhiều ngày</span>':''}<br>
-    Thời lượng: <b>${bookingState.durationHours} giờ</b> · Tạm tính: <b>${formatVND(amount)}</b>
+    Thời lượng: <b>${hoursLabel(bookingState.durationHours)}</b> · Tạm tính: <b>${priceHTML}</b>
   `;
 }
 document.getElementById('booking-date-input').addEventListener('change', (e)=>{
@@ -2911,45 +3100,53 @@ document.getElementById('booking-submit-btn').addEventListener('click', async ()
   const zalo = document.getElementById('booking-zalo').value.trim();
   if(!custName || !phone){ showToast('Vui lòng nhập tên và số điện thoại'); return; }
 
+  const acc = ACCOUNTS.find(a=>a.id===bookingState.accountId);
+  if(!acc) return;
+
+  const conflict = hasFutureConflict(acc.id, range.start, range.end);
+  if(conflict.conflict){
+    showToast('Khung giờ này đã được đặt trước, vui lòng chọn khung giờ khác');
+    BOOKINGS = await fetchActiveBookings();
+    renderBookingHourGrid();
+    return;
+  }
+
   const btn = document.getElementById('booking-submit-btn');
   btn.disabled = true; btn.textContent = 'ĐANG XỬ LÝ...';
   try{
-    const amount = computeBookingAmount();
-    const { data, error } = await sb.rpc('create_booking', {
-      p_account_id: bookingState.accountId,
-      p_account_name: bookingState.accountName,
-      p_customer_name: custName,
-      p_phone: phone,
-      p_telegram: telegram,
-      p_zalo: zalo,
-      p_start_time: range.start.toISOString(),
-      p_end_time: range.end.toISOString(),
-      p_duration_hours: bookingState.durationHours,
-      p_amount: amount,
-      p_notes: ''
-    });
-    if(error){
-      if(error.code === '23P01' || (error.message||'').includes('bookings_no_overlap')){
-        showToast('Khung giờ này vừa có người đặt trước, vui lòng chọn khung giờ khác');
-        BOOKINGS = await fetchActiveBookings();
-        renderBookingHourGrid();
-      } else {
-        logSbError('create_booking', error);
-        showToast('Đặt lịch thất bại: ' + (error.message||'lỗi không rõ'));
-      }
-      return;
-    }
-    showToast(`Đặt lịch thành công! Mã booking: ${data.code}`);
-    BOOKINGS = await fetchActiveBookings();
-    renderAllNextSlots();
-    closeModal(bookingOverlay);
-  } catch(err){
-    logSbError('create_booking exception', err);
-    showToast('Có lỗi xảy ra, vui lòng thử lại');
+    await openPaymentForBooking(acc, range, bookingState.durationHours, { name:custName, phone, telegram, zalo });
   } finally {
     btn.disabled = false; btn.textContent = 'XÁC NHẬN ĐẶT LỊCH';
   }
 });
+
+/* Mở Popup Thanh toán cho Đặt lịch trước — giao diện giống hệt Popup
+   Thuê ngay (cùng 1 modal), chỉ khác Tiêu đề / Thời gian thuê / Ngày
+   bắt đầu do người dùng tự chọn ở Popup Đặt lịch. */
+async function openPaymentForBooking(acc, range, hours, customer){
+  const price = getPackagePrice(acc, hours);
+  currentPaymentContext = {
+    mode:'booking', acc, hours:Number(hours), amount:price.final, base:price.base,
+    discounted:price.discounted, range, customer
+  };
+
+  document.getElementById('pay-title').textContent = 'Thanh toán — Đặt lịch trước';
+  document.getElementById('pay-img').src = acc.img;
+  document.getElementById('pay-name').textContent = acc.name;
+  document.getElementById('pay-package').textContent = `Gói thuê: ${hoursLabel(hours)}`;
+  document.getElementById('pay-schedule').innerHTML = `Ngày bắt đầu: <b>${fmtDDMM(range.start)} lúc ${fmtHM(range.start)}</b> · Kết thúc dự kiến: <b>${fmtHM(range.end)} ${fmtDDMM(range.end)}</b>`;
+  document.getElementById('pay-amount').innerHTML = priceAmountHTML(acc, hours);
+
+  const tempCode = await genBookingCode(0);
+  const content = `FF-${acc.name.replace(/\s+/g,'').toUpperCase()}-DL-${hours}H`;
+  document.getElementById('pay-content').textContent = content;
+  document.getElementById('pay-code').textContent = tempCode;
+  currentPaymentContext.content = content;
+
+  closeModal(bookingOverlay);
+  startCountdown(15*60);
+  openModal(paymentOverlay);
+}
 
 document.addEventListener('click', (e)=>{
   const openBtn = e.target.closest('[data-booking-open]');
