@@ -1260,6 +1260,7 @@ function updateAccCardUI(acc){
     const hours = sel.value;
     priceEl.innerHTML = `${formatVND(acc.prices[hours])}<small>/ ${hours} giờ</small>`;
   }
+  if(typeof renderNextSlot==='function') renderNextSlot(acc.id);
 }
 
 /* price update on select change — event delegation vì thẻ được dựng động */
@@ -1487,16 +1488,24 @@ function startCountdown(seconds){
   },1000);
 }
 
-function genCode(order){
-  const acc = order.acc.name.replace(' ','').toUpperCase();
+/* Mã thuê dạng NJ-YYYYMMDD-0001, tăng dần theo ngày, không trùng.
+   Số thứ tự = số đơn đã tồn tại trong ngày + 1 (+ số lần thử lại nếu
+   bị trùng do 2 người đặt cùng lúc — xem vòng lặp retry ở nơi gọi). */
+function todayCodePrefix(){
   const now = new Date();
   const y = now.getFullYear();
   const m = String(now.getMonth()+1).padStart(2,'0');
   const d = String(now.getDate()).padStart(2,'0');
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  let rand = '';
-  for(let i=0;i<5;i++) rand += chars[Math.floor(Math.random()*chars.length)];
-  return `${acc}-${y}${m}${d}-${order.hours}H-${rand}`;
+  return `NJ-${y}${m}${d}`;
+}
+async function genCode(attemptOffset){
+  const prefix = todayCodePrefix();
+  const { count, error } = await sb.from('orders')
+    .select('id', { count:'exact', head:true })
+    .like('code', `${prefix}-%`);
+  if(error) logSbError('count orders for code error', error);
+  const seq = (count||0) + 1 + (attemptOffset||0);
+  return `${prefix}-${String(seq).padStart(4,'0')}`;
 }
 
 let submittingOrder = false;
@@ -1520,7 +1529,7 @@ document.getElementById('paid-btn').addEventListener('click', async ()=>{
 
     let code = '', order = null, lastErr = null;
     for(let attempt=0; attempt<5 && !order; attempt++){
-      code = genCode(currentOrder);
+      code = await genCode(attempt);
       const { data, error } = await sb.from('orders').insert({
         code, account_id: acc.id, account_name: acc.name,
         package_hours: Number(hours), amount, status: 'unconfirmed'
@@ -1825,6 +1834,22 @@ async function uploadImageToStorage(file, folder){
 /* =========================================================
    ACCOUNTS TAB
 ========================================================= */
+/* "Đơn hôm nay" / "Doanh thu hôm nay" lấy trực tiếp từ Supabase (bảng
+   orders), không dùng dữ liệu giả. Đơn hôm nay = số đơn tạo trong ngày;
+   doanh thu hôm nay = tổng tiền các đơn đã xác nhận thanh toán trong ngày. */
+async function fetchTodayOrderStats(){
+  const since = new Date(Date.now() - 2*86400000).toISOString();
+  const { data, error } = await sb.from('orders').select('amount,status,created_at,confirmed_at').gte('created_at', since);
+  if(error){ logSbError('fetch today stats error', error); return { ordersToday:0, revenueToday:0 }; }
+  const todayStr = new Date().toDateString();
+  const rows = data || [];
+  const ordersToday = rows.filter(o=>new Date(o.created_at).toDateString()===todayStr).length;
+  const revenueToday = rows
+    .filter(o=>o.status==='confirmed' && o.confirmed_at && new Date(o.confirmed_at).toDateString()===todayStr)
+    .reduce((sum,o)=>sum+Number(o.amount||0), 0);
+  return { ordersToday, revenueToday };
+}
+
 function renderAdminStats(){
   const total = ACCOUNTS.length;
   const available = ACCOUNTS.filter(a=>a.status==='available').length;
@@ -1835,7 +1860,15 @@ function renderAdminStats(){
     <div class="admin-stat"><div class="n">${available}</div><div class="l">Có sẵn</div></div>
     <div class="admin-stat"><div class="n">${rented}</div><div class="l">Đang thuê</div></div>
     <div class="admin-stat"><div class="n">${maintenance}</div><div class="l">Bảo trì</div></div>
+    <div class="admin-stat"><div class="n" id="stat-orders-today">…</div><div class="l">Đơn hôm nay</div></div>
+    <div class="admin-stat"><div class="n" id="stat-revenue-today">…</div><div class="l">Doanh thu hôm nay</div></div>
   `;
+  fetchTodayOrderStats().then(({ ordersToday, revenueToday })=>{
+    const elO = document.getElementById('stat-orders-today');
+    const elR = document.getElementById('stat-revenue-today');
+    if(elO) elO.textContent = ordersToday;
+    if(elR) elR.textContent = formatVND(revenueToday);
+  });
 }
 
 function renderAdminList(){
@@ -2102,17 +2135,68 @@ function applySettingsToPage(s){
    TRA CỨU (LOOKUP) TAB
 ========================================================= */
 let LOOKUP_ORDERS = [];
+let LOOKUP_BOOKINGS = [];
+let LOOKUP_ROWS = [];
 let lookupState = { search:'', filter:'all', sortKey:'created_at', sortDir:'desc', page:1, pageSize:10 };
 let lookupTickInterval = null;
+const BOOKING_STATUS_LABEL = { pending:'Chờ xác nhận', confirmed:'Đã xác nhận', active:'Đang thuê', completed:'Đã hoàn tất', cancelled:'Đã hủy' };
+
+/* Gộp 2 nguồn dữ liệu "đơn thuê" của hệ thống thành 1 danh sách chung
+   để Tra cứu có thể tìm theo mã thuê / mã đơn / tên khách / SĐT /
+   Telegram / Zalo / tên account trên toàn bộ dữ liệu thật từ Supabase:
+   - "orders"   : đơn Thuê ngay (thanh toán tức thời, không thu tên khách)
+   - "bookings" : đơn Đặt lịch trước (có đầy đủ tên khách / SĐT / Telegram / Zalo) */
+function normalizeOrderForLookup(o){
+  const r = activeRental(o);
+  return {
+    _type:'order', _key:`order:${o.id}`, id:o.id, code:o.code||'',
+    account_id:o.account_id, account_name:o.account_name,
+    customer_name:'', phone:'', telegram:'', zalo:'',
+    amount:o.amount, hoursLabel:`${o.package_hours}h`,
+    status:o.status, statusLabel:ORDER_STATUS_LABEL[o.status]||o.status,
+    start_time:r?r.start_time:null, end_time:r?r.end_time:null,
+    rentalStatusLabel:rentalStatusLabel(o), remainingLabel:timeRemainingLabel(o),
+    created_at:o.created_at, updated_at:o.updated_at, raw:o
+  };
+}
+function normalizeBookingForLookup(b){
+  const now = Date.now();
+  const end = b.end_time ? new Date(b.end_time).getTime() : null;
+  let remainingLabel = '—';
+  if(b.status === 'active' && end){
+    const ms = end - now;
+    remainingLabel = ms>0 ? `${Math.floor(ms/3600000)}h ${Math.floor((ms%3600000)/60000)}p` : 'Đã hết hạn';
+  }
+  return {
+    _type:'booking', _key:`booking:${b.id}`, id:b.id, code:b.code||'',
+    account_id:b.account_id, account_name:b.account_name,
+    customer_name:b.customer_name||'', phone:b.phone||'', telegram:b.telegram||'', zalo:b.zalo||'',
+    amount:b.amount, hoursLabel:`${b.duration_hours}h`,
+    status:b.status, statusLabel:BOOKING_STATUS_LABEL[b.status]||b.status,
+    start_time:b.start_time, end_time:b.end_time,
+    rentalStatusLabel:BOOKING_STATUS_LABEL[b.status]||b.status, remainingLabel,
+    created_at:b.created_at, updated_at:b.updated_at, raw:b
+  };
+}
 
 async function refreshLookupData(){
   const wrap = document.getElementById('lookup-table-wrap');
   wrap.innerHTML = 'Đang tải dữ liệu...';
-  const { data, error } = await sb.from('orders').select('*, rentals(*)').order('created_at', { ascending:false });
-  if(error){ logSbError('fetch orders error', error); wrap.innerHTML = 'Lỗi tải dữ liệu đơn thuê.'; return; }
-  LOOKUP_ORDERS = data || [];
+  const [ordersRes, bookingsRes] = await Promise.all([
+    sb.from('orders').select('*, rentals(*)').order('created_at', { ascending:false }),
+    sb.from('bookings').select('*').order('created_at', { ascending:false })
+  ]);
+  if(ordersRes.error){ logSbError('fetch orders error', ordersRes.error); wrap.innerHTML = 'Lỗi tải dữ liệu đơn thuê.'; return; }
+  if(bookingsRes.error) logSbError('fetch bookings error', bookingsRes.error);
+  LOOKUP_ORDERS = ordersRes.data || [];
+  LOOKUP_BOOKINGS = bookingsRes.data || [];
+  LOOKUP_ROWS = [
+    ...LOOKUP_ORDERS.map(normalizeOrderForLookup),
+    ...LOOKUP_BOOKINGS.map(normalizeBookingForLookup)
+  ];
   renderLookupToolbar();
   renderLookupTable();
+  renderAdminStats();
   if(!lookupTickInterval){
     lookupTickInterval = setInterval(()=>{
       if(document.getElementById('admin-panel-lookup').style.display !== 'none' && adminDashboardOverlay.classList.contains('open')){
@@ -2152,9 +2236,11 @@ function fmtDateTime(d){
 function renderLookupToolbar(){
   const toolbar = document.getElementById('lookup-toolbar');
   toolbar.innerHTML = `
-    <input type="text" class="admin-input" id="lookup-search" placeholder="Tìm mã đơn / mã acc / tên acc / trạng thái..." value="${lookupState.search}">
+    <input type="text" class="admin-input" id="lookup-search" placeholder="Tìm mã thuê / mã đơn / tên khách / SĐT / Telegram / Zalo / tên account..." value="${lookupState.search}">
     <select class="admin-status-select" id="lookup-filter">
       <option value="all">Tất cả</option>
+      <option value="order">Chỉ đơn Thuê ngay</option>
+      <option value="booking">Chỉ đơn Đặt lịch</option>
       <option value="rented">Đang thuê</option>
       <option value="available">Đang trống</option>
       <option value="maintenance">Bảo trì</option>
@@ -2184,13 +2270,14 @@ function renderLookupToolbar(){
 function getFilteredSortedOrders(){
   const q = lookupState.search.trim().toLowerCase();
   const now = Date.now();
-  let rows = LOOKUP_ORDERS.filter(o=>{
+  let rows = LOOKUP_ROWS.filter(o=>{
     if(q){
-      const hay = [o.code, o.account_id, o.account_name, o.status, ORDER_STATUS_LABEL[o.status]].join(' ').toLowerCase();
+      const hay = [o.code, o.account_id, o.account_name, o.customer_name, o.phone, o.telegram, o.zalo, o.status, o.statusLabel].join(' ').toLowerCase();
       if(!hay.includes(q)) return false;
     }
     const f = lookupState.filter;
     if(f === 'all') return true;
+    if(f === 'order' || f === 'booking') return o._type === f;
     if(f === 'unconfirmed' || f === 'confirmed') return o.status === f;
     if(f === 'today') return new Date(o.created_at).toDateString() === new Date().toDateString();
     if(f === '7d') return (now - new Date(o.created_at).getTime()) <= 7*86400000;
@@ -2200,14 +2287,14 @@ function getFilteredSortedOrders(){
       return acc && acc.status === f;
     }
     if(f === 'expired'){
-      const r = activeRental(o);
-      return r && r.status === 'active' && new Date(r.end_time).getTime() < now;
+      if(o._type === 'order') return o.status !== 'cancelled' && o.rentalStatusLabel === 'Đã hết hạn';
+      return o.status === 'active' && o.end_time && new Date(o.end_time).getTime() < now;
     }
     return true;
   });
   rows.sort((a,b)=>{
     let av = a[lookupState.sortKey], bv = b[lookupState.sortKey];
-    if(lookupState.sortKey === 'amount' || lookupState.sortKey === 'package_hours'){ av = Number(av); bv = Number(bv); }
+    if(lookupState.sortKey === 'amount'){ av = Number(av); bv = Number(bv); }
     else { av = av ? new Date(av).getTime() || av : ''; bv = bv ? new Date(bv).getTime() || bv : ''; }
     if(av < bv) return lookupState.sortDir === 'asc' ? -1 : 1;
     if(av > bv) return lookupState.sortDir === 'asc' ? 1 : -1;
@@ -2217,13 +2304,16 @@ function getFilteredSortedOrders(){
 }
 
 const LOOKUP_COLUMNS = [
-  { key:'code', label:'Mã đơn' },
+  { key:'_type', label:'Loại' },
+  { key:'code', label:'Mã thuê' },
   { key:'account_id', label:'Mã account' },
   { key:'account_name', label:'Tên account' },
+  { key:'customer_name', label:'Tên khách' },
+  { key:'phone', label:'SĐT' },
+  { key:'_contact', label:'Telegram/Zalo' },
   { key:'amount', label:'Giá' },
-  { key:'package_hours', label:'Gói thuê' },
-  { key:'status', label:'TT thanh toán' },
-  { key:'_rental_status', label:'TT thuê' },
+  { key:'hoursLabel', label:'Gói thuê' },
+  { key:'status', label:'Trạng thái' },
   { key:'_start', label:'Bắt đầu' },
   { key:'_end', label:'Kết thúc' },
   { key:'_remaining', label:'Còn lại' },
@@ -2245,32 +2335,40 @@ function renderLookupTable(){
       <thead><tr>${LOOKUP_COLUMNS.map(c=>`<th data-sort="${c.key}">${c.label}</th>`).join('')}</tr></thead>
       <tbody>
         ${pageRows.map(o=>{
-          const r = activeRental(o);
-          return `<tr data-order="${o.id}">
+          const contact = [o.telegram, o.zalo].filter(Boolean).join(' / ') || '—';
+          return `<tr data-order="${o._key}">
+            <td>${o._type==='order'?'Thuê ngay':'Đặt lịch'}</td>
             <td>${o.code||'—'}</td>
             <td>${o.account_id}</td>
             <td>${o.account_name}</td>
+            <td>${o.customer_name||'—'}</td>
+            <td>${o.phone||'—'}</td>
+            <td>${contact}</td>
             <td>${formatVND(o.amount)}</td>
-            <td>${o.package_hours}h</td>
-            <td><span class="lookup-status-pill ${o.status}">${ORDER_STATUS_LABEL[o.status]||o.status}</span></td>
-            <td>${rentalStatusLabel(o)}</td>
-            <td>${r?fmtDateTime(r.start_time):'—'}</td>
-            <td>${r?fmtDateTime(r.end_time):'—'}</td>
-            <td>${timeRemainingLabel(o)}</td>
+            <td>${o.hoursLabel}</td>
+            <td><span class="lookup-status-pill ${o.status}">${o.statusLabel}</span></td>
+            <td>${fmtDateTime(o.start_time)}</td>
+            <td>${fmtDateTime(o.end_time)}</td>
+            <td>${o.remainingLabel}</td>
             <td>${fmtDateTime(o.created_at)}</td>
             <td>${fmtDateTime(o.updated_at)}</td>
             <td>
               <div class="lookup-row-actions">
                 <button class="admin-mini-btn" data-act="copy-code">Copy mã</button>
                 <button class="admin-mini-btn" data-act="copy-info">Copy acc</button>
+                ${o._type==='order' ? `
                 <button class="admin-mini-btn" data-act="copy-msg">Copy ND gửi khách</button>
                 <button class="admin-mini-btn" data-act="zalo">Zalo</button>
                 ${o.status==='unconfirmed' ? `<button class="admin-mini-btn primary" data-act="confirm">Xác nhận TT</button><button class="admin-mini-btn danger" data-act="reject">Từ chối TT</button>` : ''}
-                ${r && r.status==='active' ? `<button class="admin-mini-btn" data-act="extend">Gia hạn</button><button class="admin-mini-btn" data-act="end">Kết thúc thuê</button>` : ''}
+                ${o.status==='confirmed' && o.rentalStatusLabel==='Đang thuê' ? `<button class="admin-mini-btn" data-act="extend">Gia hạn</button><button class="admin-mini-btn" data-act="end">Kết thúc thuê</button>` : ''}
                 <button class="admin-mini-btn" data-act="change-acc">Đổi acc</button>
                 <button class="admin-mini-btn" data-act="maintenance">Chuyển bảo trì</button>
                 <button class="admin-mini-btn" data-act="reopen">Mở lại acc</button>
                 ${!['confirmed','rejected','cancelled','expired'].includes(o.status) ? `<button class="admin-mini-btn danger" data-act="cancel">Hủy đơn</button>` : ''}
+                ` : `
+                ${o.status==='pending' ? `<button class="admin-mini-btn primary" data-act="booking-confirm">Xác nhận</button>` : ''}
+                ${!['completed','cancelled'].includes(o.status) ? `<button class="admin-mini-btn danger" data-act="booking-cancel">Hủy lịch</button>` : ''}
+                `}
               </div>
             </td>
           </tr>`;
@@ -2283,7 +2381,7 @@ function renderLookupTable(){
   wrap.querySelectorAll('th[data-sort]').forEach(th=>{
     th.addEventListener('click', ()=>{
       const key = th.dataset.sort;
-      if(!['code','account_id','account_name','amount','package_hours','status','created_at','updated_at'].includes(key)) return;
+      if(!['code','account_id','account_name','customer_name','amount','status','created_at','updated_at'].includes(key)) return;
       if(lookupState.sortKey === key){ lookupState.sortDir = lookupState.sortDir === 'asc' ? 'desc' : 'asc'; }
       else { lookupState.sortKey = key; lookupState.sortDir = 'asc'; }
       renderLookupTable();
@@ -2341,13 +2439,36 @@ function copyText(text, successMsg){
   }
 }
 
-async function handleLookupAction(action, orderId){
-  const order = LOOKUP_ORDERS.find(o=>o.id===orderId);
+async function handleLookupAction(action, rowKey){
+  const row = LOOKUP_ROWS.find(o=>o._key===rowKey);
+  if(!row) return;
+
+  if(action === 'copy-code'){ copyText(row.code||'', 'Đã sao chép mã'); return; }
+  if(action === 'copy-info'){ copyText(`${row.account_id} — ${row.account_name}`, 'Đã sao chép thông tin acc'); return; }
+
+  if(row._type === 'booking'){
+    if(action === 'booking-confirm'){
+      const { error } = await sb.from('bookings').update({ status:'confirmed' }).eq('id', row.id);
+      if(error){ logSbError('booking confirm error', error); showToast('Lỗi xác nhận lịch đặt'); return; }
+      showToast('Đã xác nhận lịch đặt');
+      refreshLookupData();
+      return;
+    }
+    if(action === 'booking-cancel'){
+      if(!confirm(`Hủy lịch đặt ${row.code}?`)) return;
+      const { error } = await sb.from('bookings').update({ status:'cancelled' }).eq('id', row.id);
+      if(error){ logSbError('booking cancel error', error); showToast('Lỗi hủy lịch đặt'); return; }
+      showToast('Đã hủy lịch đặt');
+      refreshLookupData();
+      return;
+    }
+    return;
+  }
+
+  const order = LOOKUP_ORDERS.find(o=>o.id===row.id);
   if(!order) return;
   const rental = activeRental(order);
 
-  if(action === 'copy-code'){ copyText(order.code||'', 'Đã sao chép mã đơn'); return; }
-  if(action === 'copy-info'){ copyText(`${order.account_id} — ${order.account_name}`, 'Đã sao chép thông tin acc'); return; }
   if(action === 'copy-msg'){
     const msg = `Cảm ơn bạn đã thuê ${order.account_name} (gói ${order.package_hours} giờ).\nMã đơn: ${order.code}\nVui lòng gửi mã này qua Zalo để nhận thông tin đăng nhập.`;
     copyText(msg, 'Đã sao chép nội dung gửi khách');
@@ -2444,14 +2565,14 @@ async function handleLookupAction(action, orderId){
 
 function exportLookup(type){
   const rows = getFilteredSortedOrders().map(o=>{
-    const r = activeRental(o);
     return {
-      'Mã đơn': o.code||'', 'Mã account': o.account_id, 'Tên account': o.account_name,
-      'Giá': o.amount, 'Gói thuê (giờ)': o.package_hours,
-      'Trạng thái thanh toán': ORDER_STATUS_LABEL[o.status]||o.status,
-      'Trạng thái thuê': rentalStatusLabel(o),
-      'Thời gian bắt đầu': r?fmtDateTime(r.start_time):'', 'Thời gian kết thúc': r?fmtDateTime(r.end_time):'',
-      'Thời gian còn lại': timeRemainingLabel(o),
+      'Loại': o._type==='order'?'Thuê ngay':'Đặt lịch',
+      'Mã thuê': o.code||'', 'Mã account': o.account_id, 'Tên account': o.account_name,
+      'Tên khách': o.customer_name||'', 'SĐT': o.phone||'', 'Telegram': o.telegram||'', 'Zalo': o.zalo||'',
+      'Giá': o.amount, 'Gói thuê': o.hoursLabel,
+      'Trạng thái': o.statusLabel,
+      'Thời gian bắt đầu': fmtDateTime(o.start_time), 'Thời gian kết thúc': fmtDateTime(o.end_time),
+      'Thời gian còn lại': o.remainingLabel,
       'Ngày tạo': fmtDateTime(o.created_at), 'Ngày cập nhật': fmtDateTime(o.updated_at)
     };
   });
@@ -2502,6 +2623,14 @@ function bindPublicRealtime(){
       applySettingsToPage(payload.new);
     })
     .subscribe();
+
+  sb.channel('public-rentals')
+    .on('postgres_changes', { event:'*', schema:'public', table:'rentals' }, async ()=>{
+      ACTIVE_RENTALS = await fetchActiveRentalsPublic();
+      renderAllNextSlots();
+      if(bookingOverlay.classList.contains('open') && typeof renderBookingHourGrid==='function') renderBookingHourGrid();
+    })
+    .subscribe();
 }
 
 function bindAdminRealtime(){
@@ -2509,13 +2638,20 @@ function bindAdminRealtime(){
   adminRealtimeBound = true;
   sb.channel('admin-orders')
     .on('postgres_changes', { event:'*', schema:'public', table:'orders' }, ()=>{
+      if(!isAdminLoggedIn || !adminDashboardOverlay.classList.contains('open')) return;
+      if(document.getElementById('admin-panel-lookup').style.display !== 'none') refreshLookupData();
+      if(document.getElementById('admin-panel-accounts').style.display !== 'none') renderAdminStats();
+    })
+    .subscribe();
+  sb.channel('admin-rentals')
+    .on('postgres_changes', { event:'*', schema:'public', table:'rentals' }, ()=>{
       if(isAdminLoggedIn && adminDashboardOverlay.classList.contains('open') && document.getElementById('admin-panel-lookup').style.display !== 'none'){
         refreshLookupData();
       }
     })
     .subscribe();
-  sb.channel('admin-rentals')
-    .on('postgres_changes', { event:'*', schema:'public', table:'rentals' }, ()=>{
+  sb.channel('admin-bookings')
+    .on('postgres_changes', { event:'*', schema:'public', table:'bookings' }, ()=>{
       if(isAdminLoggedIn && adminDashboardOverlay.classList.contains('open') && document.getElementById('admin-panel-lookup').style.display !== 'none'){
         refreshLookupData();
       }
@@ -2532,6 +2668,7 @@ async function renderAdminDashboard(){
    BOOKING SYSTEM — Đặt lịch theo khung giờ, Timeline, chống trùng
 ========================================================= */
 let BOOKINGS = []; // toàn bộ booking đang "chiếm chỗ" (pending/confirmed/active) của mọi account
+let ACTIVE_RENTALS = []; // phiên thuê đang hoạt động (từ luồng "Thuê ngay") của mọi account
 const bookingOverlay = document.getElementById('booking-overlay');
 const bookingState = { accountId:null, accountName:'', date:new Date(), selectedHour:null, durationHours:1 };
 const DURATION_OPTIONS = [1,2,3,4,6,12,24];
@@ -2540,6 +2677,15 @@ async function fetchActiveBookings(){
   const { data, error } = await sb.from('bookings').select('*').in('status',['pending','confirmed','active']).order('start_time',{ ascending:true });
   if(error){ logSbError('fetchActiveBookings', error); return []; }
   return data || [];
+}
+async function fetchActiveRentalsPublic(){
+  const { data, error } = await sb.from('rentals').select('*').eq('status','active');
+  if(error){ logSbError('fetchActiveRentalsPublic', error); return []; }
+  return data || [];
+}
+function activeRentalForAccount(accId){
+  const now = new Date();
+  return ACTIVE_RENTALS.find(r=>r.account_id===accId && r.status==='active' && new Date(r.end_time)>now) || null;
 }
 function bookingsForAccount(accId){
   return BOOKINGS.filter(b=>b.account_id===accId);
@@ -2558,9 +2704,25 @@ function dayLabel(d){
   return WD[d.getDay()];
 }
 
-/* ---- Hiển thị "còn trống / lịch gần nhất" trên từng Card ---- */
+/* ---- Hiển thị "còn trống / lịch gần nhất" trên từng Card ----
+   BUG FIX: trước đây hàm này chỉ nhìn vào bảng "bookings" (đặt lịch
+   trước), nên khi acc đang được thuê qua luồng "Thuê ngay" (không tạo
+   booking) thì dòng trạng thái dưới card không khớp với badge trạng
+   thái ở trên (vd: badge "Có sẵn" nhưng dòng dưới lại hiện giờ thuê cũ
+   của 1 booking khác, hoặc ngược lại báo "Trống" trong khi acc đang
+   thực sự được thuê). Giờ ưu tiên kiểm tra phiên thuê đang hoạt động
+   thật sự (ACTIVE_RENTALS) trước, sau đó mới xét tới lịch đặt trước. */
 function computeNextSlotInfo(accId){
+  const acc = ACCOUNTS.find(a=>a.id===accId);
+  if(acc && acc.status==='maintenance'){
+    return { state:'busy', text:'Đang bảo trì' };
+  }
   const now = new Date();
+  const rental = activeRentalForAccount(accId);
+  if(rental){
+    const e = new Date(rental.end_time);
+    return { state:'busy', text:`Đang thuê đến ${fmtHM(e)} ${dayLabel(e)==='Hôm nay'?'':fmtDDMM(e)}`.trim() };
+  }
   const list = bookingsForAccount(accId).map(b=>({ ...b, s:new Date(b.start_time), e:new Date(b.end_time) }));
   const active = list.find(b=>b.s<=now && b.e>now);
   if(active){
@@ -2585,6 +2747,7 @@ function timelineSegmentsForDay(accId, day){
   const dayStart = new Date(day.getFullYear(), day.getMonth(), day.getDate(), 0,0,0);
   const dayEnd = new Date(dayStart); dayEnd.setDate(dayEnd.getDate()+1);
   const acc = ACCOUNTS.find(a=>a.id===accId);
+  const rental = activeRentalForAccount(accId);
   const segs = [];
   for(let h=0; h<24; h++){
     const segStart = new Date(dayStart); segStart.setHours(h);
@@ -2592,13 +2755,18 @@ function timelineSegmentsForDay(accId, day){
     let cls = 'free';
     if(acc && acc.status==='maintenance'){ cls='maintenance'; }
     else{
-      const overlap = bookingsForAccount(accId).find(b=>{
-        const s = new Date(b.start_time), e = new Date(b.end_time);
-        return s < segEnd && e > segStart;
-      });
-      if(overlap){
-        const now = new Date();
-        cls = (new Date(overlap.start_time) <= now && new Date(overlap.end_time) > now) ? 'renting' : 'booked';
+      const now = new Date();
+      const rentalOverlap = rental && new Date(rental.start_time) < segEnd && new Date(rental.end_time) > segStart;
+      if(rentalOverlap){
+        cls = (new Date(rental.start_time) <= now && new Date(rental.end_time) > now) ? 'renting' : 'booked';
+      } else {
+        const overlap = bookingsForAccount(accId).find(b=>{
+          const s = new Date(b.start_time), e = new Date(b.end_time);
+          return s < segEnd && e > segStart;
+        });
+        if(overlap){
+          cls = (new Date(overlap.start_time) <= now && new Date(overlap.end_time) > now) ? 'renting' : 'booked';
+        }
       }
     }
     segs.push({ hour:h, cls });
@@ -2821,6 +2989,7 @@ function bindBookingRealtime(){
 
   try{
     BOOKINGS = await fetchActiveBookings();
+    ACTIVE_RENTALS = await fetchActiveRentalsPublic();
     renderAllNextSlots();
   } catch(err){ logSbError('init bookings error', err); }
 
